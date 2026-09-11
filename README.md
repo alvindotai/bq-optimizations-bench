@@ -138,11 +138,19 @@ computed from them, and they carry the complete query plan for each job.
 [release]: https://github.com/alvindotai/bq-optimizations-bench/releases/latest
 
 ```bash
+mkdir -p results
 curl -sL https://github.com/alvindotai/bq-optimizations-bench/releases/latest/download/bq-myth-bench-results-v1.0.tar.gz \
   | tar -xz -C results
+
 python3 -m bqbench verify reproducibility    # checks them against the matrix
 python3 -m bqbench analyze                   # rebuilds the summary
+python3 -m bqbench economics                 # rebuilds the break-even
 ```
+
+Neither of those needs a GCP project or any credentials. If the repository is
+still private, the anonymous URL above returns 404 — use
+`gh release download v1.0 --repo alvindotai/bq-optimizations-bench -p '*.tar.gz'`
+instead.
 
 Each record is one JSON object per job, carrying the billing metrics plus
 `plan_steps` and `plan_records` — the stage sequence and per-stage records

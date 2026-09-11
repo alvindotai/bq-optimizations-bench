@@ -32,7 +32,7 @@ ALLOW = re.compile(r"example-project|bq_myth_bench|example\.com")
 #: contains the org name; that is published by definition, not leaked. Keep this
 #: list to exact strings - never relax the patterns above to accommodate a line.
 ALLOW_LINES = (
-    "https://github.com/alvindotai/bq-optimizations-bench",
+    "alvindotai/bq-optimizations-bench",   # the repo's own slug and URLs
 )
 
 HERE = pathlib.Path(__file__).resolve()
