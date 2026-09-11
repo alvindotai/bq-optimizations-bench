@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bqbench"
+version = "1.0.0"
+description = "Benchmarks for BigQuery query-optimization folklore"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+dependencies = []          # standard library only, by design - see README
+
+[project.urls]
+Homepage = "https://github.com/alvindotai/bq-optimizations-bench"
+
+[project.scripts]
+bqbench = "bqbench.__main__:main"
+
+[tool.setuptools]
+packages = ["bqbench", "bqbench.commands"]
