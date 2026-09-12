@@ -1,8 +1,14 @@
-"""Fail-closed publication gate.
+"""Fail-closed scan for anything that should not be published.
 
-This repository is public. Nothing in it may carry an internal project id,
-dataset name, hostname, employee identity or company-specific token. Run it
-before every commit; it exits non-zero on the first hit.
+Generic patterns (credentials, private keys, real email addresses, absolute home
+paths) are built in. Organisation-specific strings - company names, internal
+project ids, dataset names - belong in a local `.leakpatterns` file, which is
+gitignored: a denylist committed to a public repository publishes exactly the
+identifiers it is meant to suppress. See `.leakpatterns.example`.
+
+A line beginning with `!` in that file is an exemption: any source line
+containing it is skipped. That is how a repository's own public URL survives a
+pattern matching its organisation name.
 """
 import pathlib
 import re
@@ -11,72 +17,97 @@ from .. import paths
 
 HELP = "scan the tree for anything that must not be published"
 
-# Case-insensitive. Additions belong here rather than in .gitignore: the point
-# is to catch content, not to hide files.
-FORBIDDEN = [
-    r"alvin",                    # company name, project prefixes, dataset names
-    r"\balv[-_]",                # alv-proxy, alv-costs, alv_...
-    r"alvbench",                 # superseded job-id prefix
-    r"25846",                    # internal GCP project number
-    r"blog_bench|opt_harness",   # internal dataset names
-    r"[A-Za-z0-9._%+-]+@(?!example\.com)[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-    r"mesmacosta|marcelocosta",  # personal handles / home paths
-    r"/Users/[a-z]+/",           # absolute local paths
-    r"prod-\d{4,}",              # internal project numbering
-    r"\bsecret[s]?/|SECRET_|PRIVATE_KEY|BEGIN [A-Z ]*PRIVATE KEY",
+BUILTIN = [
+    (r"BEGIN [A-Z ]*PRIVATE KEY", "private key"),
+    (r"\bAKIA[0-9A-Z]{16}\b", "AWS access key"),
+    (r"\bghp_[A-Za-z0-9]{36}\b", "GitHub token"),
+    (r"\bAIza[0-9A-Za-z_\-]{35}\b", "Google API key"),
+    (r"(?i)\b(api[_-]?key|secret|passwd|password|token)\s*[:=]\s*['\"][^'\"]{8,}",
+     "hardcoded credential"),
+    (r"[A-Za-z0-9._%+-]+@(?!example\.(com|org))[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+     "email address"),
+    (r"/(?:Users|home)/[a-z][a-z0-9_-]*/", "absolute home path"),
 ]
-SKIP_DIRS = {".git", "__pycache__", ".venv", ".mypy_cache", ".pytest_cache"}
-ALLOW = re.compile(r"example-project|bq_myth_bench|example\.com")
 
-#: Narrow, line-level exemptions. The repository's own public URL necessarily
-#: contains the org name; that is published by definition, not leaked. Keep this
-#: list to exact strings - never relax the patterns above to accommodate a line.
-ALLOW_LINES = (
-    "alvindotai/bq-optimizations-bench",   # the repo's own slug and URLs
-)
+SKIP_DIRS = {".git", "__pycache__", ".venv", ".mypy_cache", ".pytest_cache",
+             "node_modules", "dist", "build"}
 
+PATTERN_FILE = paths.ROOT / ".leakpatterns"
 HERE = pathlib.Path(__file__).resolve()
 
 
 def add_arguments(p):
     p.add_argument("--path", default=str(paths.ROOT),
                    help="tree to scan (default: the repository root)")
+    p.add_argument("--patterns", default=str(PATTERN_FILE),
+                   help=f"extra patterns, one regex per line (default: {PATTERN_FILE.name})")
     p.add_argument("--include-results", action="store_true",
                    help="also scan results/, which is not committed")
 
 
 def main(args):
     root = pathlib.Path(args.path).resolve()
-    patterns = [(p, re.compile(p, re.I)) for p in FORBIDDEN]
-    hits, scanned = [], 0
+    pattern_file = pathlib.Path(args.patterns).resolve()
+    patterns = [(re.compile(p, re.I), why) for p, why in BUILTIN]
+    local, exempt = _local_patterns(pattern_file)
+    patterns += local
 
-    for f in sorted(root.rglob("*")):
-        if not f.is_file() or any(d in f.parts for d in SKIP_DIRS):
+    hits, scanned = [], 0
+    for path in sorted(root.rglob("*")):
+        if path.resolve() == pattern_file:
             continue
-        if f.resolve() == HERE:
-            continue                      # necessarily contains the patterns
-        if not args.include_results and paths.RESULTS in f.parents:
+        if not _scannable(path, root, args.include_results):
             continue
         scanned += 1
         try:
-            text = f.read_text(errors="ignore")
+            text = path.read_text(errors="ignore")
         except OSError:
             continue
         for n, line in enumerate(text.splitlines(), 1):
-            if any(allowed in line for allowed in ALLOW_LINES):
+            if any(allowed in line for allowed in exempt):
                 continue
-            for src, pattern in patterns:
-                m = pattern.search(line)
-                if m and not ALLOW.fullmatch(m.group(0)):
-                    hits.append((f.relative_to(root), n, src, m.group(0)[:60],
-                                 line.strip()[:100]))
+            for pattern, why in patterns:
+                found = pattern.search(line)
+                if found:
+                    hits.append((path.relative_to(root), n, why,
+                                 found.group(0)[:60], line.strip()[:100]))
 
     if hits:
         print(f"LEAK GATE FAILED - {len(hits)} hit(s):\n")
-        for f, n, src, tok, line in hits[:60]:
-            print(f"  {f}:{n}  /{src}/  matched {tok!r}\n      {line}")
-        if len(hits) > 60:
-            print(f"  ... and {len(hits)-60} more")
+        for path, n, why, token, line in hits[:50]:
+            print(f"  {path}:{n}  {why}: {token!r}\n      {line}")
+        if len(hits) > 50:
+            print(f"  ... and {len(hits) - 50} more")
         return 1
-    print(f"leak gate PASSED - {scanned} files clean")
+    print(f"leak gate PASSED - {scanned} files clean "
+          f"({len(BUILTIN)} built-in + {len(local)} local patterns, "
+          f"{len(exempt)} exemptions)")
     return 0
+
+
+def _scannable(path, root, include_results):
+    if not path.is_file() or path.resolve() == HERE:
+        return False
+    if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+        return False
+    return include_results or paths.RESULTS not in path.parents
+
+
+def _local_patterns(path):
+    """(patterns, exemptions) from a `.leakpatterns` file.
+
+    One regex per line; `#` starts a comment; a leading `!` marks a literal
+    string whose presence exempts the whole line from scanning.
+    """
+    if not path.exists():
+        return [], []
+    patterns, exempt = [], []
+    for line in path.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("!"):
+            exempt.append(line[1:].strip())
+        else:
+            patterns.append((re.compile(line, re.I), "local pattern"))
+    return patterns, exempt

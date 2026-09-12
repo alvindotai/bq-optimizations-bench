@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """A small BigQuery REST client, for benchmarking.
 
 Deliberately not `google-cloud-bigquery`: the client library summarises job

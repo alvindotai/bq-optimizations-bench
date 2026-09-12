@@ -1,16 +1,14 @@
 """Price a matrix by dry-run, before billing a single byte."""
-from .. import client, matrix
+from .. import client, matrix, pricing
 from ..config import LOCATION, require_project
-
-ON_DEMAND_USD_PER_TIB = 6.25          # US multi-region list price
 
 HELP = "dry-run a matrix and print what it would cost"
 
 
 def add_arguments(p):
     p.add_argument("--matrix", default="all", choices=sorted(matrix.MATRICES))
-    p.add_argument("--price", type=float, default=ON_DEMAND_USD_PER_TIB,
-                   help=f"USD per TiB (default {ON_DEMAND_USD_PER_TIB})")
+    p.add_argument("--price", type=float, default=pricing.ON_DEMAND_USD_PER_TIB,
+                   help=f"USD per TiB (default {pricing.ON_DEMAND_USD_PER_TIB})")
 
 
 def main(args):

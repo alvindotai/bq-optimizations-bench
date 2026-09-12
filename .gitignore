@@ -11,3 +11,6 @@ dist/
 
 # Release artefacts, built from results/
 /dist/
+
+# Organisation-specific leak patterns; see .leakpatterns.example
+/.leakpatterns

@@ -47,11 +47,3 @@ def mann_whitney_u(a, b):
     z = (abs(u - mean_u) - 0.5) / math.sqrt(var_u)   # continuity-corrected
     p = 2 * (1 - 0.5 * (1 + math.erf(z / math.sqrt(2))))
     return max(0.0, min(1.0, p))
-
-
-def quantile(sorted_values, q):
-    """Nearest-rank quantile. Inputs must already be sorted."""
-    if not sorted_values:
-        return None
-    idx = min(len(sorted_values) - 1, max(0, round(q * (len(sorted_values) - 1))))
-    return sorted_values[idx]
