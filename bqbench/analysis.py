@@ -23,6 +23,38 @@ from collections import OrderedDict, defaultdict
 
 from .stats import mann_whitney_u, median_ratio_ci
 
+#: Per-variant keys every consumer of a summary depends on. A summary written
+#: by an older version will be missing some; say so instead of raising KeyError
+#: three frames deep.
+REQUIRED_VARIANT_KEYS = frozenset({
+    "n", "slot_ms_median", "ratio_vs_base", "p_vs_base", "ratio_ci",
+    "bytes_billed", "records_read", "stages",
+})
+REQUIRED_BLOCK_KEYS = frozenset({
+    "claim", "plans_identical", "work_identical", "bytes_identical",
+    "plans_stable", "work_stable", "variants",
+})
+
+
+def load_summary(path, regenerate_with="python3 -m bqbench analyze"):
+    """Read a summary.json, refusing one this version cannot read.
+
+    A summary is derived, not source: it can always be rebuilt from the job
+    records beside it, which is what the error says to do.
+    """
+    with open(path) as fh:
+        summary = json.load(fh)
+    for key, block in summary.items():
+        missing = (REQUIRED_BLOCK_KEYS - set(block)) | (
+            REQUIRED_VARIANT_KEYS - set(next(iter(block.get("variants", {}).values()), {})))
+        if missing:
+            raise SystemExit(
+                f"{path} was written by an older version of bqbench\n"
+                f"  (comparison {key!r} is missing {sorted(missing)})\n"
+                f"  Regenerate it with:\n"
+                f"      {regenerate_with}")
+    return summary
+
 
 def load(paths):
     """Group job records by myth, then by variant."""

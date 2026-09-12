@@ -55,7 +55,7 @@ def add_arguments(p):
 
 
 def main(args):
-    summary = paths.read_json(paths.SUMMARY, _ANALYZE)
+    summary = analysis.load_summary(paths.require(paths.SUMMARY, _ANALYZE))
     rebuilds = paths.read_json(paths.REBUILD, "python3 -m bqbench rebuild")
     sizes = paths.read_json(paths.FIXTURE_SIZES, "python3 -m bqbench fixtures")
 

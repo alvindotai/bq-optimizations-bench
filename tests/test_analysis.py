@@ -1,7 +1,10 @@
 """The analysis decides what the benchmark is allowed to claim, so the stability
 flags and identity verdicts are tested against records built to trip them."""
+import json
+import tempfile
 import unittest
 from collections import defaultdict
+from pathlib import Path
 
 from bqbench import analysis
 
@@ -109,3 +112,45 @@ class ByteFormatting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SummarySchema(unittest.TestCase):
+    """A summary is derived: an old one must be refused, not crash a consumer."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+
+    def _write(self, payload):
+        path = Path(self._dir.name) / "summary.json"
+        path.write_text(json.dumps(payload))
+        return str(path)
+
+    def test_a_current_summary_loads(self):
+        g = grouped(*[record("m", v, 100 + i) for v in "ab" for i in range(4)])
+        path = self._write(analysis.summarise(g, META))
+        self.assertIn("m", analysis.load_summary(path))
+
+    def test_a_summary_missing_a_variant_key_is_refused(self):
+        g = grouped(*[record("m", v, 100 + i) for v in "ab" for i in range(4)])
+        summary = analysis.summarise(g, META)
+        del summary["m"]["variants"]["a"]["ratio_ci"]
+        with self.assertRaises(SystemExit) as caught:
+            analysis.load_summary(self._write(summary))
+        self.assertIn("ratio_ci", str(caught.exception))
+
+    def test_a_summary_missing_a_block_key_is_refused(self):
+        g = grouped(*[record("m", v, 100 + i) for v in "ab" for i in range(4)])
+        summary = analysis.summarise(g, META)
+        del summary["m"]["work_stable"]
+        with self.assertRaises(SystemExit) as caught:
+            analysis.load_summary(self._write(summary))
+        self.assertIn("work_stable", str(caught.exception))
+
+    def test_the_error_says_how_to_fix_it(self):
+        g = grouped(*[record("m", v, 100 + i) for v in "ab" for i in range(4)])
+        summary = analysis.summarise(g, META)
+        del summary["m"]["work_stable"]
+        with self.assertRaises(SystemExit) as caught:
+            analysis.load_summary(self._write(summary))
+        self.assertIn("bqbench analyze", str(caught.exception))

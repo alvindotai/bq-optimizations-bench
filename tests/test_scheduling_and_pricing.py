@@ -1,13 +1,19 @@
 """The run schedule and the break-even arithmetic - the two places where a
 quiet mistake would change a published number."""
+import io
 import os
+import sys
+import tempfile
 import unittest
 from collections import defaultdict
+from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("BENCH_PROJECT", "example-project")
 
 from bqbench import pricing  # noqa: E402
-from bqbench.commands.run import interleave  # noqa: E402
+from bqbench.commands import run as run_cmd  # noqa: E402
+from bqbench.commands.run import _count_records, interleave  # noqa: E402
 
 MYTHS = [
     {"key": "one", "reps": 3, "variants": [("a", "A"), ("b", "B")]},
@@ -91,3 +97,22 @@ class Breakeven(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunSafety(unittest.TestCase):
+    """A tool that spends money should say so, and should not quietly double a
+    dataset when someone runs it twice."""
+
+    def test_counts_existing_records_so_an_append_can_be_warned_about(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "out.jsonl"
+            self.assertEqual(_count_records(path), 0)
+            path.write_text('{"a":1}\n\n{"a":2}\n')
+            self.assertEqual(_count_records(path), 2)
+
+    def test_non_interactive_runs_are_not_blocked_on_a_prompt(self):
+        with mock.patch.object(run_cmd.client, "dry_run",
+                               return_value={"bytes_processed": 2**30}), \
+             mock.patch.object(sys, "stdin", io.StringIO()), \
+             mock.patch("builtins.print"):
+            self.assertTrue(run_cmd._confirm_cost(MYTHS, "p", assume_yes=False))
