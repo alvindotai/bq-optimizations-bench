@@ -19,3 +19,27 @@ bqbench = "bqbench.__main__:main"
 
 [tool.setuptools]
 packages = ["bqbench", "bqbench.commands"]
+
+# `ruff check` is the lint standard; `ruff format` is deliberately NOT adopted.
+# Several modules align data in columns - the predicate-selectivity table in
+# matrix.py, the report columns in analysis.py - and the formatter collapses that
+# alignment, which is the most readable thing about them.
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RET", "ARG", "TRY", "BLE", "PL"]
+ignore = [
+    "PTH123",   # open() is fine; pathlib everywhere adds noise, not safety
+    "TRY003",   # a CLI's worth is its error messages - they belong at the raise
+    "PLR2004",  # the magic numbers are the subject here (2**30, 0.05, 6.25)
+    "PLR0913",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Long lines in these two are content, not code: SQL under test, and the
+# literal template RESULTS.md is rendered from. Wrapping either would change
+# what is measured or what is published.
+"bqbench/matrix.py" = ["E501"]
+"bqbench/commands/results_doc.py" = ["E501"]

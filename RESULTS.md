@@ -36,6 +36,8 @@ First attempt at the same question, and a useful failure: BigQuery pruned storag
 
 plans identical · records identical · billed bytes identical
 
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
+
 ## Myth 1b — ...or the expensive function runs on every row
 
 An expensive regex beside a cheap filter, with block pruning defeated by `MOD()` so both predicates see all 23M rows.
@@ -98,11 +100,13 @@ The right side filtered hard, so LEFT must emit ~23M unmatched rows.
 
 | variant | n | slot-ms (median) | min..max | ratio | p | billed | records read | stages |
 |---|---:|---:|---|---:|---:|---:|---:|---:|
-| `inner` | 14 | 64,032 | 34,355..131,395 | 1.0 | — | 458 MiB | 43,310,256 | 4 |
-| `left` | 14 | 42,376 | 27,465..76,088 | 0.662 | 0.070 | 458 MiB | 43,387,851 | 4 |
+| `inner` | 14 | 64,032 | 34,355..131,395 | 1.0 | — | 458 MiB | 44,771,628 | 4 |
+| `left` | 14 | 42,376 | 27,465..76,088 | 0.662 | 0.070 | 458 MiB | 45,056,144 | 4 |
 | `full_outer` | 14 | 31,632 | 16,743..51,107 | 0.494 | 0.000 | 458 MiB | 64,778,381 | 4 |
 
 plans differ · records differ · billed bytes identical
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Myth 3 — prefer DISTINCT over GROUP BY (127 groups)
 
@@ -121,12 +125,14 @@ plans identical · records identical · billed bytes identical
 
 | variant | n | slot-ms (median) | min..max | ratio | p | billed | records read | stages |
 |---|---:|---:|---|---:|---:|---:|---:|---:|
-| `distinct` | 18 | 26,496 | 13,206..42,920 | 1.0 | — | 348 MiB | 23,020,127 | 3 |
-| `group_by` | 18 | 26,565 | 12,565..44,107 | 1.003 | 1.000 | 348 MiB | 23,020,127 | 3 |
+| `distinct` | 18 | 26,496 | 13,206..42,920 | 1.0 | — | 348 MiB | 40,887,142 | 3 |
+| `group_by` | 18 | 26,565 | 12,565..44,107 | 1.003 | 1.000 | 348 MiB | 40,887,142 | 3 |
 
 plans identical · records identical · billed bytes identical
 
-> **Plans were not stable across repetitions for this comparison, so no plan-identity claim is made.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+> **Query plans were not stable across repetitions, so no plan-identity claim is made for this comparison.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Myth 3 — 8.5M distinct tags
 
@@ -136,12 +142,14 @@ Both spellings return 8,448,317 rows.
 
 | variant | n | slot-ms (median) | min..max | ratio | p | billed | records read | stages |
 |---|---:|---:|---|---:|---:|---:|---:|---:|
-| `distinct` | 18 | 49,922 | 42,254..140,546 | 1.0 | — | 605 MiB | 43,016,075 | 5 |
-| `group_by` | 18 | 50,046 | 40,036..258,671 | 1.002 | 0.862 | 605 MiB | 44,150,423 | 6 |
+| `distinct` | 18 | 49,922 | 42,254..140,546 | 1.0 | — | 605 MiB | 46,454,097 | 5 |
+| `group_by` | 18 | 50,046 | 40,036..258,671 | 1.002 | 0.862 | 605 MiB | 46,114,543 | 6 |
 
 plans differ · records differ · billed bytes identical
 
-> **Plans were not stable across repetitions for this comparison, so no plan-identity claim is made.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+> **Query plans were not stable across repetitions, so no plan-identity claim is made for this comparison.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Myth 4 — CTE vs subquery, referenced once
 
@@ -149,12 +157,14 @@ plans differ · records differ · billed bytes identical
 
 | variant | n | slot-ms (median) | min..max | ratio | p | billed | records read | stages |
 |---|---:|---:|---|---:|---:|---:|---:|---:|
-| `cte` | 18 | 28,029 | 11,138..43,731 | 1.0 | — | 348 MiB | 23,020,127 | 3 |
-| `subquery` | 18 | 29,414 | 13,874..43,718 | 1.049 | 0.602 | 348 MiB | 23,020,127 | 3 |
+| `cte` | 18 | 28,029 | 11,138..43,731 | 1.0 | — | 348 MiB | 37,128,813 | 3 |
+| `subquery` | 18 | 29,414 | 13,874..43,718 | 1.049 | 0.602 | 348 MiB | 37,128,813 | 3 |
 
 plans identical · records identical · billed bytes identical
 
-> **Plans were not stable across repetitions for this comparison, so no plan-identity claim is made.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+> **Query plans were not stable across repetitions, so no plan-identity claim is made for this comparison.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Myth 4 — referenced three times
 
@@ -196,7 +206,9 @@ Runs opposite the advice, but at p = 0.24 this is directional only, not a measur
 
 plans differ · records differ · billed bytes identical
 
-> **Plans were not stable across repetitions for this comparison, so no plan-identity claim is made.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+> **Query plans were not stable across repetitions, so no plan-identity claim is made for this comparison.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Myth 6 — denormalise for sub-second latency
 
@@ -211,7 +223,9 @@ A three-table star join against the same rows pre-joined. See the break-even bel
 
 plans differ · records differ · billed bytes differ
 
-> **Plans were not stable across repetitions for this comparison, so no plan-identity claim is made.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+> **Query plans were not stable across repetitions, so no plan-identity claim is made for this comparison.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Myth 7 — cast string keys to INT64
 
@@ -235,10 +249,12 @@ The single most useful measurement here: the bill does not move, the slot time c
 
 | variant | n | slot-ms (median) | min..max | ratio | p | billed | records read | stages |
 |---|---:|---:|---|---:|---:|---:|---:|---:|
-| `no_limit` | 10 | 324,459 | 299,514..351,606 | 1.0 | — | 1.80 GiB | 80,943,652 | 4 |
-| `limit_10` | 10 | 96 | 48..224 | 0.0 | 0.000 | 1.80 GiB | 132,348 | 2 |
+| `no_limit` | 10 | 324,459 | 299,514..351,606 | 1.0 | — | 1.80 GiB | 82,698,133 | 4 |
+| `limit_10` | 10 | 96 | 48..224 | 0.0 | 0.000 | 1.80 GiB | 201,595 | 2 |
 
 plans differ · records differ · billed bytes identical
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Control — SELECT *
 
@@ -248,12 +264,14 @@ This myth's finding rests on billed bytes alone. The slot-time column is not evi
 
 | variant | n | slot-ms (median) | min..max | ratio | p | billed | records read | stages |
 |---|---:|---:|---|---:|---:|---:|---:|---:|
-| `two_columns` | 6 | 2,992 | 127..4,720 | 1.0 | — | 780 MiB | 408,986 | 2 |
-| `select_star` | 6 | 180 | 109..283 | 0.06 | 0.045 | 37.17 GiB | 132,589 | 2 |
+| `two_columns` | 6 | 2,992 | 127..4,720 | 1.0 | — | 780 MiB | 23,020,127 | 2 |
+| `select_star` | 6 | 180 | 109..283 | 0.06 | 0.045 | 37.17 GiB | 134,498 | 2 |
 
 plans identical · records differ · billed bytes differ
 
-> **Plans were not stable across repetitions for this comparison, so no plan-identity claim is made.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+> **Query plans were not stable across repetitions, so no plan-identity claim is made for this comparison.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Control — REGEXP_CONTAINS vs = vs LIKE
 
@@ -263,11 +281,13 @@ plans identical · records differ · billed bytes differ
 |---|---:|---:|---|---:|---:|---:|---:|---:|
 | `equality` | 18 | 7,678 | 5,131..10,377 | 1.0 | — | 605 MiB | 23,020,127 | 1 |
 | `like_exact` | 18 | 7,572 | 4,959..9,905 | 0.986 | 0.987 | 605 MiB | 23,020,127 | 1 |
-| `regexp` | 18 | 8,990 | 7,458..10,251 | 1.171 | 0.005 | 605 MiB | 23,020,127 | 1 |
+| `regexp` | 18 | 8,990 | 7,458..10,251 | 1.171 | 0.005 | 605 MiB | 23,020,279 | 1 |
 
-plans identical · records identical · billed bytes identical
+plans identical · records differ · billed bytes identical
 
-> **Plans were not stable across repetitions for this comparison, so no plan-identity claim is made.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+> **Query plans were not stable across repetitions, so no plan-identity claim is made for this comparison.** BigQuery's runtime adaptivity produced more than one stage sequence for the same SQL.
+
+> **Record counts were not stable across repetitions, so the `records identical` verdict above is indicative only.** A query that short-circuits reads a different number of records each run; the figure shown is the median.
 
 ## Denormalisation break-even
 

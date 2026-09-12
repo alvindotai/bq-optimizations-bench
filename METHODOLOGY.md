@@ -39,11 +39,21 @@ On-demand slot time is noisy. The same query ran between 42,254 and 140,546
 slot-ms across its own repetitions. Any single-run comparison on this metric is
 worthless, and even medians move by a few percent between passes.
 
-So every comparison also carries **deterministic work metrics** read out of the
-query plan: the stage sequence, records read, records written, and shuffle
-bytes. These do not move with slot availability. When two spellings produce the
-same stages and the same record counts, they are executing the same query —
-that is the citable evidence, and slot time is corroboration.
+So every comparison also carries the **work metrics** in the query plan: the
+stage sequence, records read, records written, and shuffle bytes. These do not
+move with slot availability, which is what makes them better evidence than
+timing. When two spellings produce the same stages and the same record counts,
+they are executing the same query — that is the citable evidence, and slot time
+is corroboration.
+
+They are not constant, however, and the analysis does not pretend otherwise. A
+query that short-circuits reads a different number of records each run: the
+`SELECT id, tags ... LIMIT 10` variant ranged from 408,986 to 23,020,127 records
+read across its six repetitions. Each variant therefore carries
+`work_stable_across_reps`, the reported figure is the **median** (for the same
+reason slot time is), and a comparison whose counts were unstable is marked as
+such in RESULTS.md rather than having an identity claim rest on it. Every record
+count quoted in this document comes from a comparison that was stable.
 
 Two summary counts from the 19 comparisons:
 
@@ -129,6 +139,15 @@ CTE-vs-subquery, three-table join order, the predicate-cost trio,
 In several of them the *record counts* are still identical across variants,
 which is the stronger evidence and is unaffected by stage jitter — where that is
 the case, the results text says so explicitly rather than leaning on the plan.
+
+**The schedule was checked for positional bias.** Variant order inside a
+comparison was fixed in the original run, which could in principle have made
+whichever query ran second look systematically faster. It did not: across the
+two-variant comparisons that measured no effect, the second variant's median is
+1.011x the first — inside the noise. `bqbench verify reproducibility` reports
+that figure and fails outside 0.95–1.05, and the runner now rotates variant
+order per repetition so later runs are robust by construction rather than by
+inspection.
 
 **Three-table join order is directional only.** The 0.968 ratio runs opposite
 the folklore, but at p = 0.24 it is not a significant result. It is reported as

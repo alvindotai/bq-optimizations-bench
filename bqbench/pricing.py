@@ -3,6 +3,7 @@
 The denormalisation break-even is reported by two commands. It lives here so
 they cannot disagree.
 """
+import json
 import statistics
 
 ON_DEMAND_USD_PER_TIB = 6.25          # US multi-region
@@ -54,7 +55,6 @@ def denormalisation_breakeven(summary, rebuilds, sizes,
 
 def total_cost(results_files, rebuilds, usd_per_tib=ON_DEMAND_USD_PER_TIB):
     """Jobs, bytes and dollars for a whole run."""
-    import json
     billed = jobs = 0
     for path in results_files:
         with open(path) as fh:

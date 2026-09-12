@@ -1,9 +1,15 @@
 """Run a matrix and write one JSON record per job.
 
-Repetitions are INTERLEAVED - rep 1 of every variant, then rep 2, and so on -
-so drift in the shared on-demand slot pool spreads evenly across variants
-instead of being confounded with the variant itself. Running all of A and then
-all of B would attribute the weather to the SQL.
+Two scheduling rules, both there to stop the measurement picking up something
+other than the SQL:
+
+  interleaved   rep 1 of every variant, then rep 2, and so on. Running all of A
+                and then all of B would attribute drift in the shared slot pool
+                to the query.
+  rotated       the variant order inside a comparison shifts by one each rep, so
+                no variant is always measured first. `bqbench verify
+                reproducibility` checks the recorded runs for the positional
+                bias this removes.
 """
 import datetime
 import json
@@ -43,7 +49,7 @@ def main(args):
                 record = client.run(sql, project, location=LOCATION,
                                     labels={"bq_myth_bench": "myth",
                                             "myth": key.replace("_", "-")[:63]})
-            except Exception as exc:                       # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - one failed job must not abandon a 300-job run
                 failed += 1
                 print(f"{prefix} FAILED: {str(exc)[:160]}", flush=True)
                 continue
@@ -61,12 +67,14 @@ def main(args):
 
 
 def interleave(myths):
-    """[(key, variant, sql, rep), ...] ordered rep-major."""
+    """[(key, variant, sql, rep), ...] ordered rep-major, variants rotated."""
     schedule = []
     for rep in range(1, max(m["reps"] for m in myths) + 1):
         for m in myths:
             if rep > m["reps"]:
                 continue
-            for variant, sql in m["variants"]:
+            variants = m["variants"]
+            shift = (rep - 1) % len(variants)
+            for variant, sql in variants[shift:] + variants[:shift]:
                 schedule.append((m["key"], variant, sql, rep))
     return schedule

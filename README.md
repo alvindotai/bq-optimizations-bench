@@ -61,22 +61,30 @@ on-demand pool the same query ran between 42,254 and 140,546 slot-ms across its
 own repetitions. Any single-run comparison is worthless, and even medians move a
 few percent between passes.
 
-So every comparison also records **deterministic work metrics** read out of the
-query plan — the stage sequence, records read, records written, shuffle bytes.
-These don't move with slot availability. When two spellings produce the same
-stages and the same record counts, they are executing the same query. That is
-the evidence; timing is corroboration.
+So every comparison also records the **work metrics** in the query plan — the
+stage sequence, records read, records written, shuffle bytes. These don't move
+with slot availability, which is what makes them better evidence than timing:
+when two spellings produce the same stages and the same record counts, they are
+executing the same query. That is the evidence; timing is corroboration.
+
+They are not constant either, though, so the analysis checks rather than
+assumes. A query that short-circuits — anything with a `LIMIT` — reads a
+different number of records every run, and BigQuery re-partitions shuffles from
+run to run. Each comparison therefore carries two stability flags, and an
+identity claim is only made where the underlying figure was actually stable.
 
 Three design choices follow from that:
 
-1. **Repetitions are interleaved** — rep 1 of every variant, then rep 2, and so
-   on. Running all of A then all of B would attribute the weather to the SQL.
+1. **Repetitions are interleaved and rotated** — rep 1 of every variant, then
+   rep 2, and so on, with the variant order inside a comparison shifting each
+   rep. Running all of A then all of B would attribute the weather to the SQL;
+   always running A first would let a warm-up effect masquerade as one.
 2. **The result cache is off on every job.** A cached job bills nothing and
    reports no plan, which would silently void the measurement.
-3. **Plan stability is checked per variant**, not assumed. In 7 of 19
-   comparisons BigQuery's runtime adaptivity produced more than one stage
-   sequence for the *same* SQL across repetitions. Those comparisons make no
-   plan-identity claim. See [METHODOLOGY.md](METHODOLOGY.md#caveats).
+3. **Stability is checked per variant**, not assumed. In 7 of 19 comparisons
+   BigQuery produced more than one stage sequence for the *same* SQL, and in 10
+   the record counts moved between runs. Those comparisons make no
+   corresponding identity claim. See [METHODOLOGY.md](METHODOLOGY.md#caveats).
 
 ---
 
@@ -174,8 +182,10 @@ that the four join types return genuinely different row counts (46,135,068 /
 pairs each return identical answers.
 
 `verify reproducibility` asserts that `bqbench/matrix.py` still generates every
-query in your `results/`, byte-for-byte, and that the documented run conditions
-(cache off, on-demand, 6–18 reps) actually hold in the data. It catches the
+query in your `results/`, byte-for-byte, that the documented run conditions
+(cache off, on-demand, 6–18 reps) actually hold in the data, and that the
+schedule is not biasing results — it reports how much faster variants measured
+second were, and fails outside ±5%. It catches the
 failure mode specific to benchmark repos: the code drifts, the recorded results
 stay, and the two quietly stop describing each other.
 

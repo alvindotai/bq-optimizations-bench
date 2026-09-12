@@ -7,6 +7,7 @@ REST API directly keeps all of it. Standard library only.
 
 Auth is the caller's `gcloud auth print-access-token`.
 """
+import contextlib
 import json
 import subprocess
 import time
@@ -23,6 +24,10 @@ _token = {"value": None, "fetched_at": 0.0}
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
 MAX_ATTEMPTS = 5
+
+
+class AlreadyExists(RuntimeError):
+    """A client-assigned job id was submitted twice - the first one landed."""
 
 
 def token():
@@ -48,7 +53,10 @@ def _request(method, url, body=None):
             if exc.code in RETRY_STATUS and attempt < MAX_ATTEMPTS - 1:
                 time.sleep(2 ** attempt)
                 continue
-            raise RuntimeError(f"HTTP {exc.code} on {method} {url}: {detail[:2000]}")
+            if exc.code == 409:
+                raise AlreadyExists(detail[:500]) from exc
+            raise RuntimeError(
+                f"HTTP {exc.code} on {method} {url}: {detail[:2000]}") from exc
         except urllib.error.URLError:
             if attempt < MAX_ATTEMPTS - 1:
                 time.sleep(2 ** attempt)
@@ -80,12 +88,14 @@ def run(sql, project, location="US", labels=None, timeout=1800):
                         "useQueryCache": False, "priority": "INTERACTIVE"}}
     if labels:
         config["labels"] = labels
-    # The job id is client-assigned, so a retried insert is idempotent rather
-    # than a duplicate submission.
-    _request("POST", f"{API}/projects/{project}/jobs",
-             {"configuration": config,
-              "jobReference": {"projectId": project, "jobId": job_id,
-                               "location": location}})
+    # The job id is client-assigned, so a retried insert whose first attempt
+    # actually landed is not a duplicate submission - the job is already
+    # running. Poll it rather than discarding a good measurement.
+    with contextlib.suppress(AlreadyExists):
+        _request("POST", f"{API}/projects/{project}/jobs",
+                 {"configuration": config,
+                  "jobReference": {"projectId": project, "jobId": job_id,
+                                   "location": location}})
 
     url = f"{API}/projects/{project}/jobs/{job_id}?location={location}"
     deadline = time.time() + timeout

@@ -23,7 +23,7 @@ FOLLOWUPS = []
 _target = CORE
 
 
-def myth(key, claim, title, variants, reps=9, note=""):
+def myth(key, claim, title, variants, *, reps=9, note=""):
     """Register one comparison.
 
     key       stable identifier; appears in every result record
@@ -100,9 +100,9 @@ myth("m2a_jointype_same_rows",
 # 2b: the same join with the right side filtered hard, so LEFT must emit ~23M
 # unmatched rows while INNER emits far fewer. Isolates output cardinality as the
 # real cost driver.
-_m2b = ("SELECT COUNT(*) AS n FROM {q} q {{}} JOIN "
-        "(SELECT id, reputation FROM {u} WHERE reputation > 10000) u "
-        "ON q.owner_user_id = u.id").format(q=Q, u=U).format
+_m2b = (f"SELECT COUNT(*) AS n FROM {Q} q {{}} JOIN "
+        f"(SELECT id, reputation FROM {U} WHERE reputation > 10000) u "
+        "ON q.owner_user_id = u.id").format
 myth("m2b_jointype_diff_rows",
      "Same claim, but where the join types genuinely return different row counts.",
      "Myth 2 control — result sets differ by construction",
@@ -318,7 +318,7 @@ def select(name):
         return MATRICES[name]
     except KeyError:
         raise SystemExit(f"unknown matrix {name!r}; choose from "
-                         f"{', '.join(MATRICES)}")
+                         f"{', '.join(MATRICES)}") from None
 
 
 #: Reading order for RESULTS.md. Definition order groups comparisons by when

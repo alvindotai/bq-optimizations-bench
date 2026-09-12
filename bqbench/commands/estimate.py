@@ -26,7 +26,7 @@ def main(args):
                 continue
             try:
                 gib = client.dry_run(sql, project, LOCATION)["bytes_processed"] / 2**30
-            except Exception as exc:                       # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - a table you cannot see should not stop the estimate
                 print(f"{m['key']:30} {name:24} DRY-RUN FAILED: {str(exc)[:80]}")
                 continue
             cost = gib * (args.price / 1024) * m["reps"]

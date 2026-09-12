@@ -14,3 +14,5 @@ dist/
 
 # Organisation-specific leak patterns; see .leakpatterns.example
 /.leakpatterns
+.ruff_cache/
+.tox/

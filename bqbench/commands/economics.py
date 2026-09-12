@@ -1,6 +1,4 @@
 """The denormalisation break-even, and what the benchmark itself cost."""
-import json
-
 from .. import paths, pricing
 
 HELP = "denormalisation break-even and total benchmark cost"
@@ -15,11 +13,9 @@ def add_arguments(p):
 
 
 def main(args):
-    summary = json.load(open(paths.require(paths.SUMMARY, _ANALYZE)))
-    rebuilds = json.load(open(paths.require(paths.REBUILD,
-                                            "python3 -m bqbench rebuild")))
-    sizes = json.load(open(paths.require(paths.FIXTURE_SIZES,
-                                         "python3 -m bqbench fixtures")))
+    summary = paths.read_json(paths.SUMMARY, _ANALYZE)
+    rebuilds = paths.read_json(paths.REBUILD, "python3 -m bqbench rebuild")
+    sizes = paths.read_json(paths.FIXTURE_SIZES, "python3 -m bqbench fixtures")
 
     b = pricing.denormalisation_breakeven(summary, rebuilds, sizes, args.price)
     print(RULE)

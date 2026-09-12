@@ -7,9 +7,15 @@ Three properties matter more than the timings:
   plans_identical   do the variants compile to the same stage sequence?
   work_identical    do they read and write the same number of records?
   plans_stable      does each variant produce ONE stage sequence across its own
-                    repetitions? Where this is false, BigQuery's runtime
-                    adaptivity varied the plan run to run, and no plan-identity
-                    claim should be made for that comparison.
+                    repetitions?
+  work_stable       does each variant read and write the SAME counts across its
+                    own repetitions?
+
+The two stability flags exist because neither property can be assumed. BigQuery
+varies the plan run to run (dynamic repartitioning, single-stage collapse), and
+a query that short-circuits - anything with a LIMIT - reads a different number
+of records each time. Where a stability flag is false, the corresponding
+identity claim is measuring noise and must not be made.
 """
 import json
 import statistics
@@ -51,12 +57,15 @@ def _compare(variants, info):
     baseline_slots = [r["slot_ms"] for r in variants[names[0]]]
     baseline_median = statistics.median(baseline_slots)
     plans = {n: variants[n][0]["plan_steps"] for n in names}
-    stable = {n: len({tuple(r["plan_steps"]) for r in variants[n]}) == 1
-              for n in names}
+    plan_stable = {n: len({tuple(r["plan_steps"]) for r in variants[n]}) == 1
+                   for n in names}
+    work_stable = {n: len({_work_of(r) for r in variants[n]}) == 1 for n in names}
 
     rows = OrderedDict(
-        (n, _variant(variants[n], plans[n], stable[n], baseline_median,
-                     None if n == names[0] else baseline_slots))
+        (n, _variant(variants[n], plans[n],
+                     plan_stable=plan_stable[n], work_stable=work_stable[n],
+                     baseline_median=baseline_median,
+                     baseline_slots=None if n == names[0] else baseline_slots))
         for n in names)
 
     return {
@@ -66,12 +75,14 @@ def _compare(variants, info):
         "work_identical": len({(r["records_read"], r["records_written"])
                                for r in rows.values()}) == 1,
         "bytes_identical": len({str(r["bytes_billed"]) for r in rows.values()}) == 1,
-        "plans_stable": all(stable.values()),
+        "plans_stable": all(plan_stable.values()),
+        "work_stable": all(work_stable.values()),
         "variants": rows,
     }
 
 
-def _variant(runs, plan, plan_stable, baseline_median, baseline_slots):
+def _variant(runs, plan, *, plan_stable, work_stable,
+             baseline_median, baseline_slots):
     slots = sorted(r["slot_ms"] for r in runs)
     median = statistics.median(slots)
     read, written, shuffled = _work(runs)
@@ -87,22 +98,31 @@ def _variant(runs, plan, plan_stable, baseline_median, baseline_slots):
         "shuffle_bytes": shuffled,
         "stages": len(plan),
         "plan_stable_across_reps": plan_stable,
+        "work_stable_across_reps": work_stable,
         "ratio_vs_base": round(median / baseline_median, 3) if baseline_median else None,
         "p_vs_base": None if baseline_slots is None else round(
             mann_whitney_u(baseline_slots, slots) or 1.0, 4),
     }
 
 
-def _work(runs):
-    """Records read, records written and shuffle bytes across plan stages.
+def _work_of(record):
+    """(records read, records written, shuffle bytes) summed over plan stages."""
+    plan = record.get("plan_records") or []
+    return (sum(s[1] for s in plan), sum(s[2] for s in plan),
+            sum(s[3] for s in plan))
 
-    Unlike slot time these do not move with slot availability, so they separate
-    the query from the weather. Identical across repetitions by construction;
-    the minimum is taken so a truncated plan cannot inflate the figure.
+
+def _work(runs):
+    """Median work across repetitions.
+
+    These do not move with slot availability, which is what makes them better
+    evidence than timing - but they are not constant either. A query that
+    short-circuits reads a different number of records each run, so the median
+    is taken for the same reason it is taken for slot time, and
+    `work_stable_across_reps` says whether it was needed.
     """
-    totals = {(sum(s[1] for s in plan), sum(s[2] for s in plan), sum(s[3] for s in plan))
-              for plan in ((r.get("plan_records") or []) for r in runs)}
-    return min(totals)
+    per_run = [_work_of(r) for r in runs]
+    return tuple(round(statistics.median(v[i] for v in per_run)) for i in range(3))
 
 
 def _one_or_all(values):
@@ -129,9 +149,11 @@ def render(summary):
               f" | plans stable across reps: {block['plans_stable']}")
         if block["note"]:
             print(f"  note  : {block['note']}")
-        if not block["plans_stable"]:
-            print("  !! plan varied across repetitions"
-                  " - no plan-identity claim for this row")
+        for what, ok in (("plan", block["plans_stable"]),
+                         ("record counts", block["work_stable"])):
+            if not ok:
+                print(f"  !! {what} varied across repetitions"
+                      f" - no identity claim for this row")
         print(f"  {'variant':24} {'n':>2} {'slot_ms med':>12} {'[min..max]':>21} "
               f"{'ratio':>7} {'p':>7} {'stg':>4} {'recs_read':>14} {'billed':>12}")
         for name, s in block["variants"].items():

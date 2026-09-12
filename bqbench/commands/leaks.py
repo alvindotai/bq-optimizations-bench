@@ -30,7 +30,7 @@ BUILTIN = [
 ]
 
 SKIP_DIRS = {".git", "__pycache__", ".venv", ".mypy_cache", ".pytest_cache",
-             "node_modules", "dist", "build"}
+             ".ruff_cache", "node_modules", "dist", "build", ".tox", ".idea"}
 
 PATTERN_FILE = paths.ROOT / ".leakpatterns"
 HERE = pathlib.Path(__file__).resolve()
@@ -102,12 +102,12 @@ def _local_patterns(path):
     if not path.exists():
         return [], []
     patterns, exempt = [], []
-    for line in path.read_text().splitlines():
-        line = line.split("#", 1)[0].strip()
-        if not line:
+    for raw in path.read_text().splitlines():
+        entry = raw.split("#", 1)[0].strip()
+        if not entry:
             continue
-        if line.startswith("!"):
-            exempt.append(line[1:].strip())
+        if entry.startswith("!"):
+            exempt.append(entry[1:].strip())
         else:
-            patterns.append((re.compile(line, re.I), "local pattern"))
+            patterns.append((re.compile(entry, re.I), "local pattern"))
     return patterns, exempt

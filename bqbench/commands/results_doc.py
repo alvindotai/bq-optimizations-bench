@@ -4,8 +4,6 @@ The document is generated so it cannot drift from the data. Headings and notes
 come from `matrix.py`, numbers from the summary, and the break-even from
 `pricing.py` - the same function the economics command reports.
 """
-import json
-
 from .. import analysis, matrix, paths, pricing
 
 HELP = "regenerate RESULTS.md from results/summary.json"
@@ -28,9 +26,17 @@ see the README.
 HEADER = ("| variant | n | slot-ms (median) | min..max | ratio | p | billed "
           "| records read | stages |\n|---|---:|---:|---|---:|---:|---:|---:|---:|")
 
-UNSTABLE = ("> **Plans were not stable across repetitions for this comparison, so "
-            "no plan-identity claim is made.** BigQuery's runtime adaptivity "
-            "produced more than one stage sequence for the same SQL.")
+UNSTABLE = {
+    "plans_stable":
+        "> **Query plans were not stable across repetitions, so no "
+        "plan-identity claim is made for this comparison.** BigQuery's runtime "
+        "adaptivity produced more than one stage sequence for the same SQL.",
+    "work_stable":
+        "> **Record counts were not stable across repetitions, so the "
+        "`records identical` verdict above is indicative only.** A query that "
+        "short-circuits reads a different number of records each run; the "
+        "figure shown is the median.",
+}
 
 
 def add_arguments(p):
@@ -39,11 +45,9 @@ def add_arguments(p):
 
 
 def main(args):
-    summary = json.load(open(paths.require(paths.SUMMARY, _ANALYZE)))
-    rebuilds = json.load(open(paths.require(paths.REBUILD,
-                                            "python3 -m bqbench rebuild")))
-    sizes = json.load(open(paths.require(paths.FIXTURE_SIZES,
-                                         "python3 -m bqbench fixtures")))
+    summary = paths.read_json(paths.SUMMARY, _ANALYZE)
+    rebuilds = paths.read_json(paths.REBUILD, "python3 -m bqbench rebuild")
+    sizes = paths.read_json(paths.FIXTURE_SIZES, "python3 -m bqbench fixtures")
 
     chunks = [PREAMBLE]
     for entry in matrix.in_doc_order():
@@ -75,8 +79,9 @@ def _comparison(entry, block):
         "records identical" if block["work_identical"] else "records differ",
         "billed bytes identical" if block["bytes_identical"] else "billed bytes differ",
     ])]
-    if not block["plans_stable"]:
-        lines += ["", UNSTABLE]
+    for flag, warning in UNSTABLE.items():
+        if not block[flag]:
+            lines += ["", warning]
     return "\n".join(lines) + "\n"
 
 
