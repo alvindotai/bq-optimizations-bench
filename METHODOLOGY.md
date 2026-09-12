@@ -97,6 +97,39 @@ Three different things are checked, and they are not interchangeable:
 - **Identical billed bytes** — the on-demand meter. True in 15 of 19
   comparisons.
 
+## "No difference detected" is not "no difference"
+
+This is the easiest way for a benchmark to overstate itself, so it is worth
+being explicit. Failing to reject a null hypothesis is not evidence for it. A
+comparison reporting p = 0.38 has not shown two spellings are the same; it has
+shown that *this* experiment, at *this* sample size, did not separate them.
+
+So every ratio carries a **percentile bootstrap 95% confidence interval**
+(`bqbench/stats.py`, seeded and reproducible), and that interval — not the
+p-value — is what a comparison actually establishes:
+
+| comparison | ratio | 95% CI | what can honestly be said |
+|---|---|---|---|
+| filter order | 0.999 | 0.92 – 1.08 | no difference larger than ~8% |
+| join type, LEFT vs INNER | 0.991 | 0.92 – 1.08 | no difference larger than ~8% |
+| DISTINCT vs GROUP BY, 127 groups | 1.077 | 0.82 – 1.34 | **no difference larger than ~35%** |
+| join order, two tables | 1.036 | 0.88 – 1.17 | no difference larger than ~17% |
+| `CAST()` in the join clause | 1.037 | 0.89 – 1.18 | no difference larger than ~18% |
+
+A ±35% bound is not "identical", and this document does not claim it is.
+
+**What carries the "False" verdicts is therefore not the timing.** It is the
+structural evidence: where two spellings compile to the same plan, read and
+write the same number of records, and bill the same bytes, they are the same
+query, and no confidence interval is needed to say so. The timing then bounds
+whatever residual could remain. Filter order, join type, DISTINCT/GROUP BY at
+two of three cardinalities, CTE-vs-subquery and two-table join order all have
+that structural identity. Where it is absent — high-cardinality DISTINCT and
+three-table join order, whose plans genuinely differ — the verdict rests on
+timing alone, the interval is shown, and the text says so.
+
+Every result reported as **real** has a CI excluding 1.0, and all nine do.
+
 ## Multiple comparisons
 
 The matrix runs roughly two dozen pairwise tests and applies **no correction for

@@ -22,14 +22,14 @@ Everything runs on a public dataset. You can reproduce the whole thing for about
 
 | Claim | Verdict | What the jobs said |
 |---|---|---|
-| Order your filters most-eliminating first | **False** | Identical plans over an 892× selectivity range, p = 0.96 |
-| …or the expensive function runs on every row | **True, wrong reason** | 1.73× with a regex, nothing with two cheap predicates. Evaluation cost, not selectivity |
-| INNER JOIN beats LEFT, which beats OUTER | **False** | All four types cost the same, within 3.3%. FULL OUTER fastest where results differ |
-| Prefer DISTINCT over GROUP BY | **False** | Three cardinalities up to 8.5M groups, identical bytes, p ≥ 0.38 |
-| Avoid CTEs, use temp tables | **False, and backwards** | CTE and subquery identical at three references. The temp table was worst, 1.28× slower |
-| Start your joins with the largest table | **False** | Ratio 1.036 (p = 0.86); three tables runs opposite the advice, though not significantly |
-| Denormalise for sub-second latency | **True, and mispriced** | 8.9× cheaper per query, but the refresh cost binds — break-even is 9–14 queries per rebuild |
-| Cast string keys to INT64 | **True, modest** | 1.38× slower on STRING, but `CAST()` in the join clause matched native INT64 |
+| Order your filters most-eliminating first | **False** | Byte-identical execution across an 892× selectivity range: same plan, same 23,020,279 records, same 1.11 GiB billed. Slot time within ±8% |
+| …or the expensive function runs on every row | **True, wrong reason** | 1.73× with a regex (CI 1.69–1.96), nothing with two cheap predicates. Evaluation cost, not selectivity |
+| INNER JOIN beats LEFT, which beats OUTER | **False** | All four compile to the same plan and read the same 129,695,296 records for the same 638 MiB. No pairwise timing difference detected; FULL OUTER fastest where results differ |
+| Prefer DISTINCT over GROUP BY | **False** | Same plan, records and bytes at 127 groups and at ~5M. At 8.5M the plans differ but the bytes don't. No timing difference detected at any of the three |
+| Avoid CTEs, use temp tables | **False, and backwards** | CTE and subquery do identical work at three references. The temp table was worst — 1.28× slower (CI 1.10–1.44) and 420 vs 348 MiB |
+| Start your joins with the largest table | **False** | Same plan, same 83,006,916 records, same bytes on two tables. On three it runs opposite the advice, not significantly |
+| Denormalise for sub-second latency | **True, and mispriced** | 8.9× cheaper per query (CI 8.5–11.1×), but the refresh cost binds — break-even is 9–14 queries per rebuild |
+| Cast string keys to INT64 | **True, modest** | 1.38× slower on STRING (CI 1.21–1.58). `CAST()` in the join clause was indistinguishable from native INT64 |
 
 Three further claims measured as controls:
 
@@ -37,7 +37,7 @@ Three further claims measured as controls:
 |---|---|---|
 | `LIMIT` reduces bytes scanned | **False** | Billed bytes identical at 1.80 GiB — while slot time drops 3,362× |
 | `SELECT *` costs more than naming columns | **True** | 780 MiB vs 37.17 GiB — 48.8× |
-| `REGEXP_CONTAINS` is slower than `=` | **True, small** | 1.17× (p = 0.005). Real, but not the cliff the phrasing implies |
+| `REGEXP_CONTAINS` is slower than `=` | **True, small** | 1.17× (CI 1.08–1.48). Real, but not the cliff the phrasing implies |
 
 The `LIMIT` row is the most useful single measurement here: the same rewrite is
 worth **nothing** on on-demand and **enormous** on capacity pricing. Which meter
@@ -72,6 +72,14 @@ assumes. A query that short-circuits — anything with a `LIMIT` — reads a
 different number of records every run, and BigQuery re-partitions shuffles from
 run to run. Each comparison therefore carries two stability flags, and an
 identity claim is only made where the underlying figure was actually stable.
+
+**And "no difference detected" is not "no difference".** Every ratio carries a
+bootstrap confidence interval, because a p-value says whether a difference was
+found and nothing about how large one could have hidden. At n = 6–18 that bound
+is often ±20%, so several of the "False" verdicts above rest on the structural
+evidence — same plan, same records, same billed bytes — with the timing only
+bounding a residual. Where a verdict rests on timing alone, RESULTS.md shows the
+interval and the text says so.
 
 Three design choices follow from that:
 
@@ -170,10 +178,15 @@ Set `BENCH_RESULTS` to put a run's output somewhere else.
 ### Checking the claims rather than trusting them
 
 ```bash
-python3 -m bqbench verify semantics        # ~$0.05, needs credentials
-python3 -m bqbench verify reproducibility  # free, no credentials
-python3 -m bqbench check-leaks             # free, no credentials
+python3 -m unittest discover -s tests -t .  # 60 tests, no network, no credentials
+python3 -m bqbench verify reproducibility   # free, no credentials
+python3 -m bqbench check-leaks              # free, no credentials
+python3 -m bqbench verify semantics         # ~$0.05, needs credentials
 ```
+
+CI runs the first three on every push and pull request, on Python 3.9 and 3.13,
+along with `ruff check`. It also asserts that the leak gate still catches a
+planted credential — a gate nobody tests is a gate nobody can trust.
 
 `verify semantics` answers the obvious objection — that the variants aren't
 really equivalent, or are so equivalent the engine folds them together. It shows

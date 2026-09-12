@@ -21,7 +21,7 @@ import json
 import statistics
 from collections import OrderedDict, defaultdict
 
-from .stats import mann_whitney_u
+from .stats import mann_whitney_u, median_ratio_ci
 
 
 def load(paths):
@@ -102,7 +102,17 @@ def _variant(runs, plan, *, plan_stable, work_stable,
         "ratio_vs_base": round(median / baseline_median, 3) if baseline_median else None,
         "p_vs_base": None if baseline_slots is None else round(
             mann_whitney_u(baseline_slots, slots) or 1.0, 4),
+        # How large a difference could have hidden here? The p-value does not
+        # say, and at n = 6..18 the answer is often "quite a lot".
+        "ratio_ci": _ci(baseline_slots, slots),
     }
+
+
+def _ci(baseline_slots, slots):
+    if baseline_slots is None:
+        return None
+    low, high = median_ratio_ci(baseline_slots, slots)
+    return None if low is None else [round(low, 3), round(high, 3)]
 
 
 def _work_of(record):
@@ -154,12 +164,13 @@ def render(summary):
             if not ok:
                 print(f"  !! {what} varied across repetitions"
                       f" - no identity claim for this row")
-        print(f"  {'variant':24} {'n':>2} {'slot_ms med':>12} {'[min..max]':>21} "
-              f"{'ratio':>7} {'p':>7} {'stg':>4} {'recs_read':>14} {'billed':>12}")
+        print(f"  {'variant':24} {'n':>2} {'slot_ms med':>12} {'ratio':>7} "
+              f"{'95% CI':>15} {'p':>7} {'stg':>4} {'recs_read':>14} {'billed':>12}")
         for name, s in block["variants"].items():
             p = "" if s["p_vs_base"] is None else f"{s['p_vs_base']:.3f}"
             stages = "n/a" if s["stages"] == 0 else s["stages"]
+            ci = ("" if not s["ratio_ci"]
+                  else f"[{s['ratio_ci'][0]:.2f}, {s['ratio_ci'][1]:.2f}]")
             print(f"  {name:24} {s['n']:>2} {s['slot_ms_median']:>12,.0f} "
-                  f"[{s['slot_ms_min']:>9,}..{s['slot_ms_max']:>9,}] "
-                  f"{s['ratio_vs_base']:>7} {p:>7} {stages:>4} "
+                  f"{s['ratio_vs_base']:>7} {ci:>15} {p:>7} {stages:>4} "
                   f"{s['records_read']:>14,} {format_bytes(s['bytes_billed']):>12}")

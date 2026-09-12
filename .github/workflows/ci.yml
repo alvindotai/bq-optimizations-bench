@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor the project claims to support, and current.
+        python-version: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # No install step: the package is standard-library only by design, and a
+      # broken import here would mean that promise had quietly been dropped.
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: CLI is importable and every subcommand parses
+        run: |
+          python -m bqbench --help
+          for cmd in estimate fixtures run analyze rebuild economics \
+                     results-doc verify check-leaks; do
+            python -m bqbench "$cmd" --help > /dev/null
+          done
+
+      - name: Commands that bill BigQuery refuse to start without a project
+        run: |
+          for cmd in estimate run fixtures rebuild; do
+            if python -m bqbench "$cmd" 2>/dev/null; then
+              echo "::error::$cmd ran without BENCH_PROJECT set"; exit 1
+            fi
+          done
+
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Fail-closed: nothing internal reaches a public commit.
+      - name: Leak gate
+        run: python -m bqbench check-leaks
+
+      - name: Leak gate still catches a planted identifier
+        run: |
+          printf 'key = "AKIA%s"\n' "IOSFODNN7EXAMPLE" > canary_check.py
+          if python -m bqbench check-leaks > /dev/null 2>&1; then
+            echo "::error::leak gate missed a planted credential"; exit 1
+          fi
+          rm canary_check.py
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pipx install ruff==0.16.7
+      - run: ruff check bqbench tests

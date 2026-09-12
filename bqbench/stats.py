@@ -1,9 +1,12 @@
-"""Non-parametric comparison of two slot-time samples.
+"""Comparing two slot-time samples without assuming a distribution.
 
 Slot time on a shared on-demand pool is not normally distributed and carries
-occasional large outliers, so the comparison is rank-based rather than a t-test.
+occasional large outliers, so both tools here are rank- or resample-based rather
+than parametric.
 """
 import math
+import random
+import statistics
 
 
 def mann_whitney_u(a, b):
@@ -47,3 +50,30 @@ def mann_whitney_u(a, b):
     z = (abs(u - mean_u) - 0.5) / math.sqrt(var_u)   # continuity-corrected
     p = 2 * (1 - 0.5 * (1 + math.erf(z / math.sqrt(2))))
     return max(0.0, min(1.0, p))
+
+
+def median_ratio_ci(baseline, other, *, resamples=10000, seed=0, level=0.95):
+    """Percentile-bootstrap CI for median(other) / median(baseline).
+
+    A p-value says whether a difference was detected. It says nothing about how
+    large a difference could have gone undetected, and at these sample sizes
+    that gap is wide: "we measured no difference" and "there is no difference"
+    are not the same claim, and only this interval distinguishes them.
+
+    Seeded, so the reported bounds are reproducible.
+    """
+    if not baseline or not other:
+        return None, None
+    rng = random.Random(seed)
+    ratios = []
+    for _ in range(resamples):
+        denominator = statistics.median(rng.choices(baseline, k=len(baseline)))
+        if denominator:
+            ratios.append(
+                statistics.median(rng.choices(other, k=len(other))) / denominator)
+    if not ratios:
+        return None, None
+    ratios.sort()
+    tail = (1 - level) / 2
+    return (ratios[int(tail * len(ratios))],
+            ratios[min(len(ratios) - 1, int((1 - tail) * len(ratios)))])

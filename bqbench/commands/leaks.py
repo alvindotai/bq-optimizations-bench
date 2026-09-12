@@ -9,6 +9,11 @@ identifiers it is meant to suppress. See `.leakpatterns.example`.
 A line beginning with `!` in that file is an exemption: any source line
 containing it is skipped. That is how a repository's own public URL survives a
 pattern matching its organisation name.
+
+A source line carrying the `# leak-gate-ok` pragma is also skipped. It exists
+for one honest case - the gate's own tests, which must contain planted
+credentials to prove the gate catches them - and should stay that rare. It
+silences a real finding just as readily as a false one.
 """
 import pathlib
 import re
@@ -29,6 +34,8 @@ BUILTIN = [
     (r"/(?:Users|home)/[a-z][a-z0-9_-]*/", "absolute home path"),
 ]
 
+INLINE_PRAGMA = "# leak-gate-ok"
+
 SKIP_DIRS = {".git", "__pycache__", ".venv", ".mypy_cache", ".pytest_cache",
              ".ruff_cache", "node_modules", "dist", "build", ".tox", ".idea"}
 
@@ -48,7 +55,7 @@ def add_arguments(p):
 def main(args):
     root = pathlib.Path(args.path).resolve()
     pattern_file = pathlib.Path(args.patterns).resolve()
-    patterns = [(re.compile(p, re.I), why) for p, why in BUILTIN]
+    patterns = [(re.compile(p, re.IGNORECASE), why) for p, why in BUILTIN]
     local, exempt = _local_patterns(pattern_file)
     patterns += local
 
@@ -64,7 +71,7 @@ def main(args):
         except OSError:
             continue
         for n, line in enumerate(text.splitlines(), 1):
-            if any(allowed in line for allowed in exempt):
+            if INLINE_PRAGMA in line or any(a in line for a in exempt):
                 continue
             for pattern, why in patterns:
                 found = pattern.search(line)
@@ -109,5 +116,5 @@ def _local_patterns(path):
         if entry.startswith("!"):
             exempt.append(entry[1:].strip())
         else:
-            patterns.append((re.compile(entry, re.I), "local pattern"))
+            patterns.append((re.compile(entry, re.IGNORECASE), "local pattern"))
     return patterns, exempt

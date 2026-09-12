@@ -39,17 +39,18 @@ def build_parser():
                               formatter_class=argparse.RawDescriptionHelpFormatter)
         if hasattr(module, "add_arguments"):
             module.add_arguments(sub)
-        sub.set_defaults(_run=module.main)
+        sub.set_defaults(run=module.main)
     return parser
 
 
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not getattr(args, "_run", None):
+    handler = getattr(args, "run", None)
+    if handler is None:
         parser.print_help()
         return 2
-    return args._run(args)
+    return handler(args)
 
 
 if __name__ == "__main__":

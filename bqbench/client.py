@@ -26,20 +26,26 @@ RETRY_STATUS = (429, 500, 502, 503, 504)
 MAX_ATTEMPTS = 5
 
 
-class AlreadyExists(RuntimeError):
+class AlreadyExistsError(RuntimeError):
     """A client-assigned job id was submitted twice - the first one landed."""
 
 
 def token():
     if _token["value"] is None or time.time() - _token["fetched_at"] > _TOKEN_TTL_S:
+        # `gcloud` is resolved from PATH by design: users install it wherever
+        # their platform puts it, and pinning an absolute path would break that.
         _token["value"] = subprocess.run(
-            ["gcloud", "auth", "print-access-token"],
+            ["gcloud", "auth", "print-access-token"],  # noqa: S607
             capture_output=True, text=True, check=True).stdout.strip()
         _token["fetched_at"] = time.time()
     return _token["value"]
 
 
 def _request(method, url, body=None):
+    # Every caller builds on API, but assert it: urlopen would happily follow a
+    # file:// or custom scheme if one ever reached here.
+    if not url.startswith(API):
+        raise ValueError(f"refusing to open non-BigQuery URL: {url[:80]}")
     payload = json.dumps(body).encode() if body is not None else None
     for attempt in range(MAX_ATTEMPTS):
         req = urllib.request.Request(url, data=payload, method=method)
@@ -54,7 +60,7 @@ def _request(method, url, body=None):
                 time.sleep(2 ** attempt)
                 continue
             if exc.code == 409:
-                raise AlreadyExists(detail[:500]) from exc
+                raise AlreadyExistsError(detail[:500]) from exc
             raise RuntimeError(
                 f"HTTP {exc.code} on {method} {url}: {detail[:2000]}") from exc
         except urllib.error.URLError:
@@ -91,7 +97,7 @@ def run(sql, project, location="US", labels=None, timeout=1800):
     # The job id is client-assigned, so a retried insert whose first attempt
     # actually landed is not a duplicate submission - the job is already
     # running. Poll it rather than discarding a good measurement.
-    with contextlib.suppress(AlreadyExists):
+    with contextlib.suppress(AlreadyExistsError):
         _request("POST", f"{API}/projects/{project}/jobs",
                  {"configuration": config,
                   "jobReference": {"projectId": project, "jobId": job_id,
@@ -143,8 +149,10 @@ def _statistics(job, job_id, project, location):
         "edition": query.get("edition"),
         "num_stages": len(plan),
         "plan_steps": [s.get("name") for s in plan],
-        # (stage, recordsRead, recordsWritten, shuffleOutputBytes) - the
-        # deterministic work metrics this benchmark actually argues from.
+        # (stage, recordsRead, recordsWritten, shuffleOutputBytes) - the work
+        # metrics this benchmark argues from. They do not move with slot
+        # availability, but they are not constant either; analysis.py takes the
+        # median and reports whether they were stable.
         "plan_records": [(s.get("name"),
                           int(s.get("recordsRead") or 0),
                           int(s.get("recordsWritten") or 0),
