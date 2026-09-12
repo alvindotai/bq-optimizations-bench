@@ -1,13 +1,15 @@
 """Invariants the matrix must hold for any result computed from it to mean
 what the documents say it means."""
 import importlib
+import json
 import os
+import pathlib
 import re
 import unittest
 
 os.environ.setdefault("BENCH_PROJECT", "example-project")
 
-from bqbench import matrix  # noqa: E402  - after the env default above
+from bqbench import matrix, paths  # noqa: E402  - after the env default above
 
 
 class Structure(unittest.TestCase):
@@ -104,3 +106,28 @@ class Selection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocumentedCounts(unittest.TestCase):
+    """Figures quoted in README.md and METHODOLOGY.md are derived from a run, so
+    they drift silently when the analysis changes. Pin the ones the prose
+    states, against the committed results when they are present."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not paths.SUMMARY.exists():
+            raise unittest.SkipTest("no results/summary.json; run `bqbench analyze`")
+        with open(paths.SUMMARY) as fh:
+            cls.summary = json.load(fh)
+
+    def test_comparison_count_matches_the_matrix(self):
+        self.assertEqual(len(self.summary), len(matrix.ALL))
+
+    def test_documented_stability_and_byte_counts_still_hold(self):
+        unstable_plans = sum(1 for d in self.summary.values() if not d["plans_stable"])
+        unstable_work = sum(1 for d in self.summary.values() if not d["work_stable"])
+        identical_bytes = sum(1 for d in self.summary.values() if d["bytes_identical"])
+        readme = (pathlib.Path(__file__).resolve().parent.parent / "README.md").read_text()
+        self.assertIn(f"{unstable_plans} of 19", readme)
+        self.assertIn(f"{identical_bytes} of the 19", readme)
+        self.assertEqual(unstable_work, 10)

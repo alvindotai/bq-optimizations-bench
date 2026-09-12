@@ -178,7 +178,7 @@ Set `BENCH_RESULTS` to put a run's output somewhere else.
 ### Checking the claims rather than trusting them
 
 ```bash
-python3 -m unittest discover -s tests -t .  # 60 tests, no network, no credentials
+python3 -m unittest discover -s tests -t .  # unit tests: no network, no credentials
 python3 -m bqbench verify reproducibility   # free, no credentials
 python3 -m bqbench check-leaks              # free, no credentials
 python3 -m bqbench verify semantics         # ~$0.05, needs credentials
