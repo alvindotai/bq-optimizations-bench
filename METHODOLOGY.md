@@ -20,8 +20,8 @@ what is read.
   four; CTE/subquery/temp-table, `=`/`LIKE`/`REGEXP_CONTAINS`, INT64/STRING/CAST
   and the row-count control had three each).
 - **n = 6 to 18 repetitions per variant.** Most are 14 or 18; the follow-ups are
-  11; myths 6 and 7 are 9; the `SELECT *` comparison is 6, because each rep of it
-  bills 37 GiB.
+  11; myths 6 and 7 are 9; the `LIMIT` control is 10; and the `SELECT *`
+  comparison is 6, because each rep of it bills 37 GiB.
 - **Repetitions are interleaved** — rep 1 of every variant, then rep 2, and so
   on — so drift in the shared slot pool is spread across variants instead of
   being confounded with them. Only the 18 `m7b` jobs were also *rotated*; see
@@ -114,8 +114,10 @@ confirms only that no variant smuggled in a column.
 
 That is not a weakness of the design — it is the design, and it is what licenses
 the strongest claim here. If a predicate or join rewrite is incapable of moving
-the meter, then on on-demand pricing its payoff is bounded at zero *a priori*,
-before any timing is collected. Every "False" verdict on a predicate or join
+the meter, then on on-demand pricing its **cost** payoff is bounded at zero
+*a priori*, before any timing is collected. Cost only: myth 1b is a rewrite that
+moves no bytes and still burns 1.73× the slot time, which is real money on
+capacity pricing and real contention on either. Every "False" verdict on a predicate or join
 rewrite rests on that, not on a confidence interval.
 
 Two of the fifteen are doing more than restating the design:
@@ -185,9 +187,9 @@ p-value — is what a comparison actually establishes:
 |---|---|---|---|
 | filter order | 0.999 | 0.92 – 1.08 | no difference larger than ~8% |
 | join type, LEFT vs INNER | 0.991 | 0.92 – 1.08 | no difference larger than ~8% |
-| DISTINCT vs GROUP BY, 127 groups | 1.077 | 0.82 – 1.34 | **no difference larger than ~35%** |
+| DISTINCT vs GROUP BY, 127 groups | 1.077 | 0.81 – 1.34 | **no difference larger than ~35%** |
 | join order, two tables | 1.036 | 0.88 – 1.17 | no difference larger than ~17% |
-| `CAST()` in the join clause | 1.037 | 0.89 – 1.18 | no difference larger than ~18% |
+| `CAST()` in the join clause | 1.037 | 0.87 – 1.18 | no difference larger than ~18% |
 
 A ±35% bound is not "identical", and this document does not claim it is.
 
@@ -228,8 +230,10 @@ across the set. This is why no result rests on a p-value alone:
 **One dataset, one region, one pricing model.** Everything ran against
 `bigquery-public-data.stackoverflow` (plus two fixtures derived from it) in the
 US multi-region on on-demand pricing. On a reservation with fixed slots the
-work metrics would be identical and the slot-time behaviour would differ under
-contention.
+billed bytes and the rows read from storage would be the same; the stage graph,
+and therefore the stage-summed record counts, could differ, because BigQuery
+adapts the plan at runtime — this run saw it do so for the same SQL in 7 of 20
+comparisons. Slot-time behaviour would differ under contention.
 
 **Query plans are not fully stable across repetitions.** In **7 of the 20
 comparisons**, at least one variant produced more than one distinct stage

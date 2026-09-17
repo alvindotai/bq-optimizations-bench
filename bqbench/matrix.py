@@ -65,7 +65,10 @@ myth("m1_order",
        ("least_eliminating_first",
         _m1_body(Q, " AND ".join(_m1_preds[k] for k in ("ac", "vc", "sc", "tag")))),
      ],
-     note="Four predicates spanning an 892x selectivity range, in both orders."
+     note="Four predicates spanning an 892x selectivity range - that is rows"
+          " PASSED by the tightest against the loosest (22,081 vs 19,703,319);"
+          " by rows *eliminated* the same spread is 6.9x. Presented in both"
+          " orders."
           " `bqbench verify semantics` confirms both orderings return the same"
           " 7,922 rows.")
 
@@ -233,8 +236,10 @@ myth("b2_predicate_cost",
       ("like_exact", f"SELECT COUNT(*) AS n FROM {Q} WHERE tags LIKE 'python'"),
       ("regexp",    f"SELECT COUNT(*) AS n FROM {Q} WHERE REGEXP_CONTAINS(tags, r'^python$')")])
 
-# COUNT(*) over a subquery gets folded to a metadata read, so force a real
-# column scan: LIMIT keeps the result set small while the scan stays full-width.
+# A bare COUNT(*) folds to a metadata read and bills nothing, so these variants
+# select columns instead. The LIMIT is not what forces the scan - billing is by
+# columns referenced, so `SELECT *` bills the whole table whatever the LIMIT. It
+# is there only to keep the result set small enough to be cheap to return.
 myth("b3_select_star",
      "SELECT * costs more than naming the columns you need.",
      "Control — SELECT *",

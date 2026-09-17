@@ -6,6 +6,7 @@ import os
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 os.environ.setdefault("BENCH_PROJECT", "example-project")
 
@@ -96,6 +97,50 @@ class Gate(unittest.TestCase):
         cache.mkdir()
         (cache / "blob").write_text('p = "/Users/someone/x"\n')  # leak-gate-ok
         self.assertEqual(self.scan(), 0)
+
+
+class ConfiguredIdentifiers(unittest.TestCase):
+    """The billing project is the identifier most likely to reach a published
+    artifact, and no built-in pattern matches it - a GCP project id is just a
+    hyphenated word. The gate has to learn it from the environment."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = pathlib.Path(self._dir.name)
+        (self.root / "job.jsonl").write_text(
+            '{"sql": "SELECT 1 FROM `acme-analytics-42.ds.t`"}\n')
+
+    def _run(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = leaks.main(Args(path=str(self.root),
+                                   patterns=str(self.root / ".nonexistent"),
+                                   include_results=True))
+        return code, out.getvalue()
+
+    def test_an_unset_project_leaves_the_project_id_undetected(self):
+        with mock.patch.object(leaks, "PROJECT", ""):
+            code, _ = self._run()
+        self.assertEqual(code, 0)
+
+    def test_the_configured_project_is_caught(self):
+        with mock.patch.object(leaks, "PROJECT", "acme-analytics-42"):
+            code, output = self._run()
+        self.assertEqual(code, 1)
+        self.assertIn("BENCH_PROJECT", output)
+
+    def test_the_placeholder_project_is_not_a_leak(self):
+        with mock.patch.object(leaks, "PROJECT", leaks.PLACEHOLDER_PROJECT):
+            code, _ = self._run()
+        self.assertEqual(code, 0)
+
+    def test_a_default_dataset_name_is_not_a_leak(self):
+        (self.root / "job.jsonl").write_text(
+            '{"sql": "SELECT 1 FROM `example-project.bq_myth_bench.t`"}\n')
+        with mock.patch.object(leaks, "PROJECT", ""):
+            code, _ = self._run()
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

@@ -64,6 +64,11 @@ def median_ratio_ci(baseline, other, *, resamples=10000, seed=0, level=0.95):
     """
     if not baseline or not other:
         return None, None
+    # Canonicalise the inputs. Resampling walks the list, so two runs over the
+    # same measurements in a different order produce different bounds - which
+    # would make "seeded, so reproducible" true only for one arrangement of the
+    # file the records happen to sit in.
+    baseline, other = sorted(baseline), sorted(other)
     rng = random.Random(seed)
     ratios = []
     for _ in range(resamples):

@@ -30,7 +30,7 @@ see the README.
 
 ## Myth 1 — order your filters most-eliminating first
 
-Four predicates spanning an 892x selectivity range, in both orders. `bqbench verify semantics` confirms both orderings return the same 7,922 rows.
+Four predicates spanning an 892x selectivity range - that is rows PASSED by the tightest against the loosest (22,081 vs 19,703,319); by rows *eliminated* the same spread is 6.9x. Presented in both orders. `bqbench verify semantics` confirms both orderings return the same 7,922 rows.
 
 > BigQuery doesn't optimize the WHERE clause - order your filters most-eliminating first.
 
@@ -133,7 +133,7 @@ plans differ · records not comparable · billed bytes identical
 | variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
 | `distinct` | 18 | 1,510 | 1.0 | — | — | 529 | 1.0 | 176 MiB | 23,020,127 | 1 |
-| `group_by` | 18 | 1,626.5 | 1.077 | 0.82 – 1.34 | 0.384 | 597 | 1.129 | 176 MiB | 23,020,127 | 1 |
+| `group_by` | 18 | 1,626.5 | 1.077 | 0.81 – 1.34 | 0.384 | 597 | 1.129 | 176 MiB | 23,020,127 | 1 |
 
 plans identical · records identical · billed bytes identical
 
@@ -144,7 +144,7 @@ plans identical · records identical · billed bytes identical
 | variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
 | `distinct` | 18 | 26,496 | 1.0 | — | — | 2,136 | 1.0 | 348 MiB | 40,887,142 | 3 |
-| `group_by` | 18 | 26,565 | 1.003 | 0.84 – 1.19 | 1.000 | 2,133 | 0.9986 | 348 MiB | 40,887,142 | 3 |
+| `group_by` | 18 | 26,565 | 1.003 | 0.83 – 1.20 | 1.000 | 2,133 | 0.9986 | 348 MiB | 40,887,142 | 3 |
 
 plans not comparable · records not comparable · billed bytes identical
 
@@ -194,7 +194,7 @@ The case the folklore is actually about. CTE and subquery do the same work stage
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
 | `cte_3_refs` | 14 | 40,909 | 1.0 | — | — | 1,203 | 1.0 | 348 MiB | 74,257,782 | 9 |
 | `subquery_3_copies` | 14 | 39,856.5 | 0.9743 | 0.82 – 1.13 | 0.566 | 1,147 | 0.9534 | 348 MiB | 74,257,782 | 9 |
-| `temp_table_3_refs` | 14 | 52,185 | 1.276 | 1.10 – 1.44 | 0.001 | 5,563.5 | 4.625 | 420 MiB | 0 | n/a |
+| `temp_table_3_refs` | 14 | 52,185 | 1.276 | 1.09 – 1.44 | 0.001 | 5,563.5 | 4.625 | 420 MiB | 0 | n/a |
 
 plans differ · records differ · billed bytes differ
 
@@ -254,8 +254,8 @@ Same 22.6M x 18.7M rows. The first two variants differ only in the key's storage
 | variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
 | `int_join_int` | 9 | 29,174 | 1.0 | — | — | 1,227 | 1.0 | 458 MiB | 82,549,054 | 4 |
-| `string_join_string` | 9 | 40,306 | 1.382 | 1.21 – 1.58 | 0.002 | 1,247 | 1.016 | 504 MiB | 82,549,054 | 4 |
-| `cast_inside_the_join` | 9 | 30,258 | 1.037 | 0.89 – 1.18 | 0.930 | 1,167 | 0.9511 | 478 MiB | 82,549,054 | 4 |
+| `string_join_string` | 9 | 40,306 | 1.382 | 1.20 – 1.58 | 0.002 | 1,247 | 1.016 | 504 MiB | 82,549,054 | 4 |
+| `cast_inside_the_join` | 9 | 30,258 | 1.037 | 0.87 – 1.18 | 0.930 | 1,167 | 0.9511 | 478 MiB | 82,549,054 | 4 |
 
 plans identical · records identical · billed bytes differ
 

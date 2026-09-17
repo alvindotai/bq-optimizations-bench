@@ -1,7 +1,19 @@
 """Fail-closed scan for anything that should not be published.
 
 Generic patterns (credentials, private keys, real email addresses, absolute home
-paths) are built in. Organisation-specific strings - company names, internal
+paths) are built in, as are `$BENCH_PROJECT` and a non-default `$BENCH_DATASET`
+whenever they are set - the identifiers a run writes into every record it
+produces.
+
+`results/` is skipped by default, because a run legitimately fills it with the
+real project name. **Before publishing a release asset, scan it**:
+
+    BENCH_PROJECT=my-project python3 -m bqbench check-leaks --include-results
+
+That is the one artifact this repository hands to strangers, and the built-in
+patterns alone will not save you: a GCP project id is just a hyphenated word.
+
+Organisation-specific strings - company names, internal
 project ids, dataset names - belong in a local `.leakpatterns` file, which is
 gitignored: a denylist committed to a public repository publishes exactly the
 identifiers it is meant to suppress. See `.leakpatterns.example`.
@@ -19,6 +31,7 @@ import pathlib
 import re
 
 from .. import paths
+from ..config import DATASET, PLACEHOLDER_PROJECT, PROJECT
 
 HELP = "scan the tree for anything that must not be published"
 
@@ -56,6 +69,7 @@ def main(args):
     root = pathlib.Path(args.path).resolve()
     pattern_file = pathlib.Path(args.patterns).resolve()
     patterns = [(re.compile(p, re.IGNORECASE), why) for p, why in BUILTIN]
+    patterns += _configured_identifiers()
     local, exempt = _local_patterns(pattern_file)
     patterns += local
 
@@ -90,6 +104,27 @@ def main(args):
           f"({len(BUILTIN)} built-in + {len(local)} local patterns, "
           f"{len(exempt)} exemptions)")
     return 0
+
+
+def _configured_identifiers():
+    """The billing project and dataset, as patterns, whenever they are set.
+
+    This is the identifier most likely to reach a published artifact, and none
+    of the built-in patterns match it: a GCP project id looks like an ordinary
+    hyphenated word. Before this, `check-leaks --include-results` passed
+    cleanly over a results file naming the real billing project, so the only
+    thing standing between it and a release asset was remembering to scrub by
+    hand. Reading it from the environment means the gate defends the run it is
+    actually part of, with no `.leakpatterns` file to remember.
+    """
+    found = []
+    if PROJECT and PROJECT != PLACEHOLDER_PROJECT:
+        found.append((re.compile(re.escape(PROJECT), re.IGNORECASE),
+                      "BENCH_PROJECT"))
+    if DATASET and DATASET != "bq_myth_bench":
+        found.append((re.compile(re.escape(DATASET), re.IGNORECASE),
+                      "BENCH_DATASET"))
+    return found
 
 
 def _scannable(path, root, include_results):

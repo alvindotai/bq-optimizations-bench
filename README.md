@@ -17,8 +17,8 @@ columns and BigQuery's on-demand meter charges for columns referenced.
 
 That is not a disappointing result; it is the whole argument. If a predicate or
 join rewrite is structurally incapable of moving the meter, then on on-demand
-pricing its payoff is bounded at zero before you measure anything at all. No
-confidence interval required. What the timing then adds is only how much slot
+pricing its **cost** payoff is bounded at zero before you measure anything at
+all. No confidence interval required. What the timing then adds is only how much slot
 time you are moving around for no money — and on capacity pricing, that is
 money. Which meter you are on decides whether an optimization is worth doing.
 
@@ -46,10 +46,10 @@ on a partitioned or clustered table — which is where most production tables li
 | …or the expensive function runs on every row | **True, wrong reason** | 1.73× the *slot time* with a regex (CI 1.69–1.96), 1.12× the wall clock, no change in the bill. Nothing with two cheap predicates. Evaluation cost, not selectivity |
 | INNER JOIN beats LEFT, which beats OUTER | **False** | All four compile to the same plan, scan the same 64,847,598 rows for the same 638 MiB, and finish in the same wall clock. Where results differ, FULL OUTER used half the slots for the same elapsed time |
 | Prefer DISTINCT over GROUP BY | **False** | Same plan, records and bytes at 127 groups. At ~5M and 8.5M BigQuery's plan varies run to run — identically for both spellings — and the bytes never move. No timing difference at any of the three |
-| Avoid CTEs, use temp tables | **False, and backwards** | CTE and subquery do identical work at three references. The temp table was worst — 1.28× the slots (CI 1.10–1.44), **4.6× the wall clock**, 420 vs 348 MiB. The cost is the write: the CTAS burns 51,918 slot-ms, all three read-backs 268 |
+| Avoid CTEs, use temp tables | **False, and backwards** | CTE and subquery do identical work at three references. The temp table was worst — 1.28× the slots (CI 1.09–1.44), **4.6× the wall clock**, 420 vs 348 MiB. The cost is the write: the CTAS burns 51,918 slot-ms, all three read-backs 268 |
 | Start your joins with the largest table | **False** | Same plan, same total work, same bytes on two tables. On three it runs opposite the advice, not significantly |
 | Denormalise for sub-second latency | **Half true, and mispriced** | 8.9× less *slot time*, but only **1.61× less wall clock and 1.18× cheaper on the bill** — and neither query was sub-second. The refresh cost binds: break-even is 9–14 queries per rebuild |
-| Cast string keys to INT64 | **True — and `CAST` is not a substitute** | 1.38× the slot time on STRING (CI 1.21–1.58) but the **same wall clock**; the real cost is bytes, 458 → 504 MiB. Casting both sides at query time recovers 73% of the slot penalty (1.38× → 1.10×) and **none of the bytes** — still 504 MiB. A `CAST` cannot shrink what you scan, so on on-demand it buys nothing. Migrate the column |
+| Cast string keys to INT64 | **True — and `CAST` is not a substitute** | 1.38× the slot time on STRING (CI 1.20–1.58) but the **same wall clock**; the real cost is bytes, 458 → 504 MiB. Casting both sides at query time recovers 73% of the slot penalty (1.38× → 1.10×) and **none of the bytes** — still 504 MiB. A `CAST` cannot shrink what you scan, so on on-demand it buys nothing. Migrate the column |
 
 Three further claims measured as controls:
 
@@ -57,7 +57,7 @@ Three further claims measured as controls:
 |---|---|---|
 | `LIMIT` reduces bytes scanned | **False** | Billed bytes identical at 1.80 GiB — while slot time drops 3,362× and wall clock 52×. The slots went on shuffling and materialising 23M rows, not on scanning |
 | `SELECT *` costs more than naming columns | **True** | 780 MiB for the two columns wanted vs 37.17 GiB for all twenty — 48.8× |
-| `REGEXP_CONTAINS` is slower than `=` | **True, small** | 1.17× on slots (CI 1.08–1.48), 1.15× once plan-shape jitter is controlled for. Real, but not the cliff the phrasing implies |
+| `REGEXP_CONTAINS` is slower than `=` | **True, small** | 1.17× on slots (CI 1.07–1.48), 1.15× once plan-shape jitter is controlled for. Real, but not the cliff the phrasing implies |
 
 The `LIMIT` row is the most useful single measurement here: the same rewrite is
 worth **nothing** on on-demand and **enormous** on capacity pricing. Which meter

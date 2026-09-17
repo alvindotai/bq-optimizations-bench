@@ -157,12 +157,25 @@ def _variant(runs, plan, *, plan_stable, work_stable,
         "plan_stable_across_reps": plan_stable,
         "work_stable_across_reps": work_stable,
         "ratio_vs_base": _ratio(median, baseline_median),
-        "p_vs_base": None if baseline_slots is None else round(
-            mann_whitney_u(baseline_slots, slots) or 1.0, 4),
+        "p_vs_base": _p_value(baseline_slots, slots),
         # How large a difference could have hidden here? The p-value does not
         # say, and at n = 6..18 the answer is often "quite a lot".
         "ratio_ci": _ci(baseline_slots, slots),
     }
+
+
+def _p_value(baseline_slots, slots):
+    """Mann-Whitney p, where "no samples" and "p is exactly zero" differ.
+
+    `mann_whitney_u(...) or 1.0` collapses the two: a p of 0.0 - which the
+    normal approximation does return once the samples separate far enough for
+    erf to saturate - would be published as p = 1.0, the strongest result in the
+    run reported as the weakest.
+    """
+    if baseline_slots is None:
+        return None
+    p = mann_whitney_u(baseline_slots, slots)
+    return round(1.0 if p is None else p, 4)
 
 
 def _ratio(value, baseline):
@@ -190,10 +203,16 @@ def _ci(baseline_slots, slots):
 
 
 def _work_of(record):
-    """(records read, records written, shuffle bytes) summed over plan stages."""
+    """(records read, records written) summed over plan stages.
+
+    Shuffle bytes are deliberately excluded. `work_identical` compares reads and
+    writes, so including shuffle here made `work_stable` strictly harder to
+    satisfy than the verdict it gates - a comparison could be marked unstable
+    over shuffle jitter alone and lose a record-identity claim its record counts
+    supported. Shuffle is still recorded per stage in `plan_records`.
+    """
     plan = record.get("plan_records") or []
-    return (sum(s[1] for s in plan), sum(s[2] for s in plan),
-            sum(s[3] for s in plan))
+    return (sum(s[1] for s in plan), sum(s[2] for s in plan))
 
 
 def _work(runs):
@@ -205,7 +224,8 @@ def _work(runs):
     is taken for the same reason it is taken for slot time, and
     `work_stable_across_reps` says whether it was needed.
     """
-    per_run = [_work_of(r) for r in runs]
+    per_run = [(*_work_of(r), sum(s[3] for s in (r.get("plan_records") or [])))
+               for r in runs]
     return tuple(round(statistics.median(v[i] for v in per_run)) for i in range(3))
 
 
