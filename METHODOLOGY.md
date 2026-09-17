@@ -60,18 +60,19 @@ They are not interchangeable, and on this data they disagree often:
 | comparison | slot | wall clock | billed bytes |
 |---|---:|---:|---:|
 | regex predicate first vs last | 1.73x | 1.12x | 1.00x |
-| `FULL OUTER` vs `INNER`, filtered join | 0.49x | 0.97x | 1.00x |
-| temp table vs CTE | 1.28x | 4.63x | 1.21x |
-| star join vs denormalised | 8.92x | 1.61x | 1.18x |
+| `FULL OUTER` vs `INNER`, filtered join | 1.94x | 1.10x | 1.00x |
+| temp table vs CTE | 1.25x | 4.21x | 1.21x |
+| star join vs denormalised | 8.91x | 1.61x | 1.18x |
 | `STRING` vs `INT64` join key | 1.38x | 1.02x | 1.10x |
-| `REGEXP_CONTAINS` vs `=` | 1.17x | 1.35x | 1.00x |
-| no `LIMIT` vs `LIMIT 10` | 3,362x | 52x | 1.00x |
+| `CAST` both sides vs native INT64 | 1.10x | 1.05x | 1.10x |
+| `REGEXP_CONTAINS` vs `=` | 1.18x | 1.23x | 1.00x |
+| no `LIMIT` vs `LIMIT 10` | 3,316x | 59.77x | 1.00x |
 
-So a slot-time ratio must never be read as "faster" or as "cheaper". Three of
-those rows are slot-time effects that wall clock cannot detect at all, one
-(the temp table) is far *worse* on wall clock than on slots, and every one of
-them except two costs exactly the same number of dollars on the pricing model
-this benchmark ran under. Each verdict below names its meter.
+All three columns are blocked by pass (see below). So a slot-time ratio must
+never be read as "faster" or as "cheaper": three of those rows are slot-time
+effects the wall clock barely registers, one (the temp table) is far *worse* on
+wall clock than on slots, and five of the eight cost exactly the same number of
+dollars on the pricing model this benchmark ran under. Each verdict below names its meter.
 
 ## Why slot time alone is not enough
 

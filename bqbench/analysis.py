@@ -97,7 +97,7 @@ def _compare(variants, info):
     # carries a level shift common to both its variants. Compare within a pass
     # so that shift divides out instead of being read as a difference.
     passes = _passes(variants[names[0]])
-    baseline_elapsed = statistics.median(r["elapsed_ms"] for r in variants[names[0]])
+    elapsed_passes = _passes(variants[names[0]], "elapsed_ms")
     plans = {n: _modal_plan(variants[n]) for n in names}
     plan_stable = {n: len({tuple(r["plan_steps"]) for r in variants[n]}) == 1
                    for n in names}
@@ -106,10 +106,11 @@ def _compare(variants, info):
     rows = OrderedDict(
         (n, _variant(variants[n], plans[n],
                      plan_stable=plan_stable[n], work_stable=work_stable[n],
-                     baseline_elapsed=baseline_elapsed,
                      n_passes=len(passes),
                      strata=None if n == names[0] else _strata(
-                         passes, _passes(variants[n]))))
+                         passes, _passes(variants[n])),
+                     elapsed_strata=None if n == names[0] else _strata(
+                         elapsed_passes, _passes(variants[n], "elapsed_ms"))))
         for n in names)
 
     return {
@@ -138,11 +139,11 @@ def _modal_plan(runs):
     return list(counts.most_common(1)[0][0])
 
 
-def _passes(runs):
-    """slot_ms grouped by the pass that produced them, in a stable order."""
+def _passes(runs, field="slot_ms"):
+    """One metric grouped by the pass that produced it, in a stable order."""
     by_pass = OrderedDict()
     for r in sorted(runs, key=lambda x: (x.get("run_id", ""), x.get("rep", 0))):
-        by_pass.setdefault(r.get("run_id", ""), []).append(r["slot_ms"])
+        by_pass.setdefault(r.get("run_id", ""), []).append(r[field])
     return by_pass
 
 
@@ -159,7 +160,7 @@ def _strata(baseline_passes, other_passes):
 
 
 def _variant(runs, plan, *, plan_stable, work_stable,
-             baseline_elapsed, strata, n_passes):
+             strata, elapsed_strata, n_passes):
     slots = sorted(r["slot_ms"] for r in runs)
     median = statistics.median(slots)
     elapsed = statistics.median(r["elapsed_ms"] for r in runs)
@@ -174,7 +175,10 @@ def _variant(runs, plan, *, plan_stable, work_stable,
         # claim is usually NOT about. These two disagree often enough that
         # publishing only the first would misdescribe several results.
         "elapsed_ms_median": elapsed,
-        "elapsed_ratio_vs_base": _ratio(elapsed, baseline_elapsed),
+        # Wall clock is blocked by pass for the same reason slot time is: a
+        # busy pass lengthens both variants alike.
+        "elapsed_ratio_vs_base": (1.0 if elapsed_strata is None
+                                  else _round(stratified_median_ratio(elapsed_strata))),
         "bytes_processed": _one_or_all(r["bytes_processed"] for r in runs),
         "bytes_billed": _one_or_all(r["bytes_billed"] for r in runs),
         "records_read": read,

@@ -44,9 +44,9 @@ on a partitioned or clustered table — which is where most production tables li
 |---|---|---|
 | Order your filters most-eliminating first | **False** | Four predicates reversed across an 892× selectivity range: same plan, same records, same 1.11 GiB billed. Slot time within ±9%, wall clock within 8% |
 | …or the expensive function runs on every row | **True, wrong reason** | 1.73× the *slot time* with a regex (CI 1.69–1.96), 1.12× the wall clock, no change in the bill. Nothing with two cheap predicates. Evaluation cost, not selectivity |
-| INNER JOIN beats LEFT, which beats OUTER | **False** | All four compile to the same plan, scan the same 64,847,598 rows for the same 638 MiB, and finish in the same wall clock. Where results differ, FULL OUTER used half the slots for the same elapsed time |
+| INNER JOIN beats LEFT, which beats OUTER | **False** | All four compile to the same plan, scan the same 64,847,598 rows for the same 638 MiB, and finish in the same wall clock. Where results differ, FULL OUTER used 1.94× less slot time for a wall clock within 10% |
 | Prefer DISTINCT over GROUP BY | **False** | Same plan, records and bytes at 127 groups. At ~5M and 8.5M BigQuery's plan varies run to run — identically for both spellings — and the bytes never move. No timing difference at any of the three |
-| Avoid CTEs, use temp tables | **False, and backwards** | CTE and subquery do identical work at three references. The temp table was worst — 1.25× the slots (CI 1.10–1.49), **4.6× the wall clock**, 420 vs 348 MiB. The cost is the write: the CTAS burns 51,918 slot-ms, all three read-backs 268 |
+| Avoid CTEs, use temp tables | **False, and backwards** | CTE and subquery do identical work at three references. The temp table was worst — 1.25× the slots (CI 1.10–1.49), **4.2× the wall clock**, 420 vs 348 MiB. The cost is the write: the CTAS burns 51,918 slot-ms, all three read-backs 268 |
 | Start your joins with the largest table | **False** | Same plan, same total work, same bytes on two tables. On three it runs opposite the advice, not significantly |
 | Denormalise for sub-second latency | **Half true, and mispriced** | 8.9× less *slot time*, but only **1.61× less wall clock and 1.18× cheaper on the bill** — and neither query was sub-second. The refresh cost binds: break-even is 9–14 queries per rebuild |
 | Cast string keys to INT64 | **True — and `CAST` is not a substitute** | 1.38× the slot time on STRING (CI 1.20–1.58) but the **same wall clock**; the real cost is bytes, 458 → 504 MiB. Casting both sides at query time recovers 73% of the slot penalty (1.38× → 1.10×) and **none of the bytes** — still 504 MiB. A `CAST` cannot shrink what you scan, so on on-demand it buys nothing. Migrate the column |
@@ -55,7 +55,7 @@ Three further claims measured as controls:
 
 | Claim | Verdict | What the jobs said |
 |---|---|---|
-| `LIMIT` reduces bytes scanned | **False** | Billed bytes identical at 1.80 GiB — while slot time drops 3,316× and wall clock 52×. The slots went on shuffling and materialising 23M rows, not on scanning |
+| `LIMIT` reduces bytes scanned | **False** | Billed bytes identical at 1.80 GiB — while slot time drops 3,316× and wall clock 60×. The slots went on shuffling and materialising 23M rows, not on scanning |
 | `SELECT *` costs more than naming columns | **True** | 780 MiB for the two columns wanted vs 37.17 GiB for all twenty — 48.8× |
 | `REGEXP_CONTAINS` is slower than `=` | **True, small** | 1.18× on slots (CI 1.06–1.46), 1.15× once plan-shape jitter is controlled for. Real, but not the cliff the phrasing implies |
 
@@ -85,8 +85,8 @@ pricing bills. On the on-demand pricing this whole run used, you pay for bytes
 and slot time is free. So every comparison is reported against all three meters —
 slot-ms, wall clock, billed bytes — and no ratio is called "faster" or "cheaper"
 without naming which one moved. They disagree more often than you would expect:
-the temp table is 1.25× on slots and 4.6× on the clock, while the STRING join
-key is 1.38× on slots and 1.00× on the clock.
+the temp table is 1.25× on slots and 4.2× on the clock, while the STRING join
+key is 1.38× on slots and 1.02× on the clock.
 
 Ratios are also computed **within a pass**. Fourteen comparisons were measured
 across two passes on a shared pool, and a busy pass slows both variants alike —
