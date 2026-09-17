@@ -130,11 +130,56 @@ Two of the fifteen are doing more than restating the design:
   put it back to 23,020,279 — **104× the rows, for byte-for-byte the same
   1.39 GiB bill**.
 
+## Blocking by pass
+
+The 635 jobs were not collected in one sitting. Fourteen of the twenty
+comparisons were measured across **two passes** on a shared on-demand slot pool,
+and a pass that happened to run against a busy pool is slower throughout — the
+same variant's median moved 11.3% between passes on average and 28.9% at worst.
+
+That shift is common to both variants of a comparison, because the passes are
+**perfectly balanced**: every multi-pass comparison has the same number of
+repetitions of every variant in every pass. A shared multiplicative factor
+cancels in a ratio taken *inside* a pass. It does not cancel in a ratio of
+pooled medians, because a pooled median is the median of a mixture of two
+populations, which is not a quantity anyone means to report.
+
+So every ratio here is computed **per pass and then combined** (geometric mean,
+since these are ratios), the confidence interval is a bootstrap that **resamples
+inside each pass**, and the p-value is a **van Elteren** test — Wilcoxon rank-sum
+stratified by pass, weighted 1/(N+1). With a single pass all three reduce
+exactly to the pooled forms, so the six single-pass comparisons are untouched;
+`bqbench/tests` asserts that reduction to machine precision.
+
+This matters most where the two passes disagree. The 127-group
+`DISTINCT`/`GROUP BY` comparison measured 0.87 in one pass and 1.07 in the
+other; pooled, that reads as **1.077**, and blocked it is **0.965** — on the
+other side of 1.0, reversing the apparent direction. No headline finding moved
+by more than 2.3%, but two of the controls did move:
+
+| | pooled | blocked by pass |
+|---|---:|---:|
+| `DISTINCT` vs `GROUP BY`, 127 groups | 1.077 | **0.965** |
+| `SELECT *` slot-time p | 0.045 | **0.123** |
+| three-table join order p | 0.241 | **0.058** |
+| temp table vs CTE | 1.276 | 1.247 |
+| `REGEXP_CONTAINS` vs `=` | 1.171 | 1.176 |
+
+The `SELECT *` move is the useful one: its slot-time p was already declared
+unreliable and not relied on, and blocking confirms that judgement rather than
+contradicting it.
+
+**A caution in the other direction.** Resampling inside a pass is honest but
+noisier when a pass is thin: the `SELECT *` control has three repetitions per
+pass, and its interval widens from 0.04–0.14 to 0.04–0.37 accordingly. That
+width is the truth about six jobs, not a defect in the method.
+
 ## Statistics
 
-p-values are a **two-sided Mann-Whitney U** test on the slot-ms distributions,
-computed with a normal approximation and a tie correction (`bqbench/stats.py`). At
-n = 6 to 18 these are **indicative, not definitive** — they are reported to
+p-values are a **two-sided van Elteren** test (Wilcoxon rank-sum stratified by
+pass) on the slot-ms distributions,
+computed with a normal approximation and a tie correction (`bqbench/stats.py`).
+At n = 6 to 18 these are **indicative, not definitive** — they are reported to
 distinguish "this gap survives resampling" from "this gap is the slot pool", not
 to make a formal statistical claim. Where a result is called real, the plan and
 record-count evidence agrees with the p-value; where they disagree, the text
@@ -185,13 +230,13 @@ p-value — is what a comparison actually establishes:
 
 | comparison | ratio | 95% CI | what can honestly be said |
 |---|---|---|---|
-| filter order | 0.999 | 0.92 – 1.08 | no difference larger than ~8% |
-| join type, LEFT vs INNER | 0.991 | 0.92 – 1.08 | no difference larger than ~8% |
-| DISTINCT vs GROUP BY, 127 groups | 1.077 | 0.81 – 1.34 | **no difference larger than ~35%** |
-| join order, two tables | 1.036 | 0.88 – 1.17 | no difference larger than ~17% |
+| filter order | 1.009 | 0.92 – 1.09 | no difference larger than ~9% |
+| join type, LEFT vs INNER | 0.990 | 0.92 – 1.08 | no difference larger than ~8% |
+| DISTINCT vs GROUP BY, 127 groups | 0.965 | 0.86 – 1.37 | **no difference larger than ~37%** |
+| join order, two tables | 1.025 | 0.84 – 1.14 | no difference larger than ~19% |
 | `CAST()` in the join clause | 1.037 | 0.87 – 1.18 | no difference larger than ~18% |
 
-A ±35% bound is not "identical", and this document does not claim it is.
+A ±37% bound is not "identical", and this document does not claim it is.
 
 **What carries the "False" verdicts is therefore not the timing.** It is the
 structural evidence: where two spellings compile to the same plan, read and
@@ -217,12 +262,13 @@ across the set. This is why no result rests on a p-value alone:
   `LIMIT` control and myth 2's filtered join) all sit at p ≤ 0.005 *and* are
   corroborated by plan or byte evidence that does not depend on timing at all.
   The `SELECT *` control is the exception and is not in that list: its slot-time
-  p is 0.045 and nothing rests on it — see the third bullet.
-- The weakest surviving claim is `REGEXP_CONTAINS` at p = 0.005 and a 1.17×
+  p is 0.123 once blocked by pass, and nothing rests on it — see the third
+  bullet.
+- The weakest surviving claim is `REGEXP_CONTAINS` at p = 0.006 and a 1.18×
   effect. Under a Bonferroni correction across 26 tests (α = 0.002) it would not
   survive, which is why it is reported as "real but small" rather than as a
   recommendation.
-- The `SELECT *` slot-time difference (p = 0.045) is **not** relied on at all;
+- The `SELECT *` slot-time difference (p = 0.123) is **not** relied on at all;
   that myth's finding rests entirely on billed bytes, which differ by 48.8×.
 
 ## Caveats
@@ -248,7 +294,7 @@ both are BigQuery runtime adaptivity rather than anything in the SQL:
    across the variants, but **not always, and where it is not it biases the
    ratio.** In the predicate-cost trio `=` collapsed to one stage in 14 of 18
    runs and `REGEXP_CONTAINS` in only 8 of 18 — so part of that comparison's
-   1.17x is the plan shape rather than the predicate. Comparing only the
+   1.18x is the plan shape rather than the predicate. Comparing only the
    single-stage runs of each gives **1.15x**, which is the figure to trust.
 
 The affected comparisons are: high-cardinality DISTINCT, multi-column DISTINCT,
@@ -284,9 +330,11 @@ It is a bound, not an absolution. The estimator averages over every comparison,
 so a bias confined to one of them is diluted, and at n = 6–18 only a systematic
 effect of a few percent or more will surface at all.
 
-**Three-table join order is directional only.** The 0.968 ratio runs opposite
-the folklore, but at p = 0.24 it is not a significant result. It is reported as
-"not the direction the advice predicts", not as a measured win.
+**Three-table join order is directional only.** The 0.943 ratio runs opposite
+the folklore. Blocking by pass sharpens it from p = 0.24 to **p = 0.058** —
+close, but still short of the α = 0.05 this document would want, and nowhere
+near the α = 0.002 a Bonferroni correction across 26 tests would demand. It is
+reported as "not the direction the advice predicts", not as a measured win.
 
 **The temp-table storage charge was not measured, and is negligible.** A
 `CREATE TEMP TABLE` inside a multi-statement query lives only as long as the

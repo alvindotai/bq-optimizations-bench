@@ -23,7 +23,11 @@ import math
 import statistics
 from collections import Counter, OrderedDict, defaultdict
 
-from .stats import mann_whitney_u, median_ratio_ci
+from .stats import (
+    stratified_median_ratio,
+    stratified_median_ratio_ci,
+    van_elteren,
+)
 
 #: Per-variant keys every consumer of a summary depends on. A summary written
 #: by an older version will be missing some; say so instead of raising KeyError
@@ -31,7 +35,7 @@ from .stats import mann_whitney_u, median_ratio_ci
 REQUIRED_VARIANT_KEYS = frozenset({
     "n", "slot_ms_median", "ratio_vs_base", "p_vs_base", "ratio_ci",
     "bytes_billed", "records_read", "stages",
-    "elapsed_ms_median", "elapsed_ratio_vs_base",
+    "elapsed_ms_median", "elapsed_ratio_vs_base", "strata",
 })
 REQUIRED_BLOCK_KEYS = frozenset({
     "claim", "plans_identical", "work_identical", "bytes_identical",
@@ -89,8 +93,10 @@ def _compare(variants, info):
     if not names:
         return None
 
-    baseline_slots = [r["slot_ms"] for r in variants[names[0]]]
-    baseline_median = statistics.median(baseline_slots)
+    # The run is blocked by pass: a comparison measured twice on different days
+    # carries a level shift common to both its variants. Compare within a pass
+    # so that shift divides out instead of being read as a difference.
+    passes = _passes(variants[names[0]])
     baseline_elapsed = statistics.median(r["elapsed_ms"] for r in variants[names[0]])
     plans = {n: _modal_plan(variants[n]) for n in names}
     plan_stable = {n: len({tuple(r["plan_steps"]) for r in variants[n]}) == 1
@@ -100,9 +106,10 @@ def _compare(variants, info):
     rows = OrderedDict(
         (n, _variant(variants[n], plans[n],
                      plan_stable=plan_stable[n], work_stable=work_stable[n],
-                     baseline_median=baseline_median,
                      baseline_elapsed=baseline_elapsed,
-                     baseline_slots=None if n == names[0] else baseline_slots))
+                     n_passes=len(passes),
+                     strata=None if n == names[0] else _strata(
+                         passes, _passes(variants[n]))))
         for n in names)
 
     return {
@@ -131,8 +138,28 @@ def _modal_plan(runs):
     return list(counts.most_common(1)[0][0])
 
 
+def _passes(runs):
+    """slot_ms grouped by the pass that produced them, in a stable order."""
+    by_pass = OrderedDict()
+    for r in sorted(runs, key=lambda x: (x.get("run_id", ""), x.get("rep", 0))):
+        by_pass.setdefault(r.get("run_id", ""), []).append(r["slot_ms"])
+    return by_pass
+
+
+def _strata(baseline_passes, other_passes):
+    """[(baseline, other), ...] for every pass that measured both variants.
+
+    A pass holding only one of the two cannot say anything about their ratio,
+    so it is dropped rather than pooled in. On this data no such pass exists -
+    every comparison is balanced - and the check is here so that a future
+    partial re-run degrades honestly instead of silently.
+    """
+    return [(baseline_passes[p], other_passes[p])
+            for p in baseline_passes if p in other_passes]
+
+
 def _variant(runs, plan, *, plan_stable, work_stable,
-             baseline_median, baseline_elapsed, baseline_slots):
+             baseline_elapsed, strata, n_passes):
     slots = sorted(r["slot_ms"] for r in runs)
     median = statistics.median(slots)
     elapsed = statistics.median(r["elapsed_ms"] for r in runs)
@@ -156,26 +183,16 @@ def _variant(runs, plan, *, plan_stable, work_stable,
         "stages": len(plan),
         "plan_stable_across_reps": plan_stable,
         "work_stable_across_reps": work_stable,
-        "ratio_vs_base": _ratio(median, baseline_median),
-        "p_vs_base": _p_value(baseline_slots, slots),
+        "ratio_vs_base": (1.0 if strata is None
+                          else _round(stratified_median_ratio(strata))),
+        "p_vs_base": None if strata is None else round(van_elteren(strata) or 1.0, 4),
+        # The baseline has no ratio, but it sat in the same passes, so the
+        # column reads the same down the whole comparison.
+        "strata": len(strata) if strata is not None else n_passes,
         # How large a difference could have hidden here? The p-value does not
         # say, and at n = 6..18 the answer is often "quite a lot".
-        "ratio_ci": _ci(baseline_slots, slots),
+        "ratio_ci": _ci(strata),
     }
-
-
-def _p_value(baseline_slots, slots):
-    """Mann-Whitney p, where "no samples" and "p is exactly zero" differ.
-
-    `mann_whitney_u(...) or 1.0` collapses the two: a p of 0.0 - which the
-    normal approximation does return once the samples separate far enough for
-    erf to saturate - would be published as p = 1.0, the strongest result in the
-    run reported as the weakest.
-    """
-    if baseline_slots is None:
-        return None
-    p = mann_whitney_u(baseline_slots, slots)
-    return round(1.0 if p is None else p, 4)
 
 
 def _ratio(value, baseline):
@@ -195,11 +212,16 @@ def _ratio(value, baseline):
     return round(ratio, max(3, 4 - math.ceil(math.log10(abs(ratio)))))
 
 
-def _ci(baseline_slots, slots):
-    if baseline_slots is None:
+def _round(ratio):
+    """A stratified ratio, at the same precision as a pooled one."""
+    return None if ratio is None else _ratio(ratio, 1.0)
+
+
+def _ci(strata):
+    if strata is None:
         return None
-    low, high = median_ratio_ci(baseline_slots, slots)
-    return None if low is None else [round(low, 3), round(high, 3)]
+    low, high = stratified_median_ratio_ci(strata)
+    return None if low is None else [_round(low), _round(high)]
 
 
 def _work_of(record):

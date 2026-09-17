@@ -25,7 +25,17 @@ not the others, so each ratio is reported against its own meter and none of
 them is called "faster" or "cheaper" without saying which. `p` and `95% CI`
 describe the slot-ms column only.
 
-**Read the CI, not the p-value.** `p` is a two-sided Mann-Whitney U and is
+**`ratio` is computed within a pass, so it will not equal the two median
+columns divided.** Fourteen of the comparisons were measured across two passes
+on a shared slot pool, and a pass that ran busy slows both variants alike. That
+shift cancels inside a pass and does not cancel in a pooled median, so the ratio
+is taken per pass and the passes combined; `p` is a van Elteren stratified rank
+test and the interval is a bootstrap resampled inside each pass. The median
+columns stay pooled, because they describe what the jobs did. Where a
+comparison ran in a single pass the two agree exactly. See
+[METHODOLOGY.md](METHODOLOGY.md#blocking-by-pass).
+
+**Read the CI, not the p-value.** `p` is a two-sided rank test and is
 indicative only; `95% CI` is a percentile bootstrap on the median ratio, and it
 is the column that says what a comparison actually establishes. A CI spanning
 1.00 means no difference was detected — *and* bounds how large one could have
@@ -41,9 +51,9 @@ Raw per-job records with complete query plans are published as a release asset;
 see the README.
 """
 
-HEADER = ("| variant | n | slot-ms (median) | ratio | 95% CI | p "
+HEADER = ("| variant | n | passes | slot-ms (median) | ratio | 95% CI | p "
           "| elapsed-ms (median) | wall ratio | billed | records read | stages "
-          "|\n|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|")
+          "|\n|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|")
 
 UNSTABLE = {
     "plans_stable":
@@ -112,7 +122,8 @@ def _median(value):
 
     Printed with `.0f` it silently becomes an integer the published ratios can
     no longer be reconstructed from - the `LIMIT` control's 96.5 renders as 96,
-    and 324,459 / 96 is not the 3,362x quoted beside it.
+    and a ratio cannot be sanity-checked against a median that is not the one
+    used.
     """
     return f"{value:,.0f}" if float(value).is_integer() else f"{value:,.1f}"
 
@@ -127,7 +138,8 @@ def _row(name, s):
     ci = ("—" if not s["ratio_ci"]
           else f"{_bound(s['ratio_ci'][0])} – {_bound(s['ratio_ci'][1])}")
     stages = "n/a" if s["stages"] == 0 else s["stages"]
-    return (f"| `{name}` | {s['n']} | {_median(s['slot_ms_median'])} | "
+    return (f"| `{name}` | {s['n']} | {s['strata'] or 1} | "
+            f"{_median(s['slot_ms_median'])} | "
             f"{s['ratio_vs_base']} | {ci} | {p} | "
             f"{_median(s['elapsed_ms_median'])} | "
             f"{s['elapsed_ratio_vs_base']} | "

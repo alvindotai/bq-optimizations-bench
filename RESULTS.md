@@ -13,7 +13,17 @@ not the others, so each ratio is reported against its own meter and none of
 them is called "faster" or "cheaper" without saying which. `p` and `95% CI`
 describe the slot-ms column only.
 
-**Read the CI, not the p-value.** `p` is a two-sided Mann-Whitney U and is
+**`ratio` is computed within a pass, so it will not equal the two median
+columns divided.** Fourteen of the comparisons were measured across two passes
+on a shared slot pool, and a pass that ran busy slows both variants alike. That
+shift cancels inside a pass and does not cancel in a pooled median, so the ratio
+is taken per pass and the passes combined; `p` is a van Elteren stratified rank
+test and the interval is a bootstrap resampled inside each pass. The median
+columns stay pooled, because they describe what the jobs did. Where a
+comparison ran in a single pass the two agree exactly. See
+[METHODOLOGY.md](METHODOLOGY.md#blocking-by-pass).
+
+**Read the CI, not the p-value.** `p` is a two-sided rank test and is
 indicative only; `95% CI` is a percentile bootstrap on the median ratio, and it
 is the column that says what a comparison actually establishes. A CI spanning
 1.00 means no difference was detected — *and* bounds how large one could have
@@ -34,10 +44,10 @@ Four predicates spanning an 892x selectivity range - that is rows PASSED by the 
 
 > BigQuery doesn't optimize the WHERE clause - order your filters most-eliminating first.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `most_eliminating_first` | 18 | 10,062 | 1.0 | — | — | 518.5 | 1.0 | 1.11 GiB | 23,020,279 | 2 |
-| `least_eliminating_first` | 18 | 10,054 | 0.9992 | 0.92 – 1.08 | 0.962 | 482 | 0.9296 | 1.11 GiB | 23,020,279 | 2 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `most_eliminating_first` | 18 | 2 | 10,062 | 1.0 | — | — | 518.5 | 1.0 | 1.11 GiB | 23,020,279 | 2 |
+| `least_eliminating_first` | 18 | 2 | 10,054 | 1.009 | 0.92 – 1.09 | 0.901 | 482 | 0.9296 | 1.11 GiB | 23,020,279 | 2 |
 
 plans identical · records identical · billed bytes identical
 
@@ -47,10 +57,10 @@ First attempt at the same question, and a useful failure: BigQuery pruned storag
 
 > Put the cheap/most-selective predicate first or the expensive function runs on every row.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `expensive_regex_first` | 18 | 322 | 1.0 | — | — | 455 | 1.0 | 1.39 GiB | 221,081 | 2 |
-| `cheap_equality_first` | 18 | 67.5 | 0.2096 | 0.14 – 0.33 | 0.000 | 380.5 | 0.8363 | 1.39 GiB | 221,081 | 2 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `expensive_regex_first` | 18 | 2 | 322 | 1.0 | — | — | 455 | 1.0 | 1.39 GiB | 221,081 | 2 |
+| `cheap_equality_first` | 18 | 2 | 67.5 | 0.1979 | 0.14 – 0.42 | 0.000 | 380.5 | 0.8363 | 1.39 GiB | 221,081 | 2 |
 
 plans identical · records not comparable · billed bytes identical
 
@@ -62,10 +72,10 @@ An expensive regex beside a cheap filter, with block pruning defeated by `MOD()`
 
 > Filter order matters (expensive function vs cheap filter, no block pruning possible).
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `expensive_regex_first` | 11 | 20,334 | 1.0 | — | — | 565 | 1.0 | 1.39 GiB | 23,020,279 | 2 |
-| `cheap_filter_first` | 11 | 11,723 | 0.5765 | 0.51 – 0.59 | 0.000 | 505 | 0.8938 | 1.39 GiB | 23,020,279 | 2 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `expensive_regex_first` | 11 | 1 | 20,334 | 1.0 | — | — | 565 | 1.0 | 1.39 GiB | 23,020,279 | 2 |
+| `cheap_filter_first` | 11 | 1 | 11,723 | 0.5765 | 0.51 – 0.59 | 0.000 | 505 | 0.8938 | 1.39 GiB | 23,020,279 | 2 |
 
 plans identical · records identical · billed bytes identical
 
@@ -75,10 +85,10 @@ The same reordering where neither predicate is expensive. If the effect were abo
 
 > Filter order matters when both predicates are cheap.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `selective_first` | 11 | 3,329 | 1.0 | — | — | 757 | 1.0 | 352 MiB | 23,020,127 | 1 |
-| `unselective_first` | 11 | 3,184 | 0.9564 | 0.79 – 1.28 | 0.694 | 594 | 0.7847 | 352 MiB | 23,020,127 | 1 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `selective_first` | 11 | 1 | 3,329 | 1.0 | — | — | 757 | 1.0 | 352 MiB | 23,020,127 | 1 |
+| `unselective_first` | 11 | 1 | 3,184 | 0.9564 | 0.79 – 1.28 | 0.694 | 594 | 0.7847 | 352 MiB | 23,020,127 | 1 |
 
 plans identical · records identical · billed bytes identical
 
@@ -88,10 +98,10 @@ Three `LOWER() LIKE` clauses against the single regex they replace. The obvious 
 
 > The fix that actually pays: replace the regex, don't reorder it.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `regex_over_full_scan` | 11 | 19,933 | 1.0 | — | — | 533 | 1.0 | 1.21 GiB | 23,020,279 | 2 |
-| `like_over_full_scan` | 11 | 24,817 | 1.245 | 1.19 – 1.31 | 0.000 | 636 | 1.193 | 1.21 GiB | 23,020,279 | 2 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `regex_over_full_scan` | 11 | 1 | 19,933 | 1.0 | — | — | 533 | 1.0 | 1.21 GiB | 23,020,279 | 2 |
+| `like_over_full_scan` | 11 | 1 | 24,817 | 1.245 | 1.19 – 1.31 | 0.000 | 636 | 1.193 | 1.21 GiB | 23,020,279 | 2 |
 
 plans identical · records identical · billed bytes identical
 
@@ -101,12 +111,12 @@ All four join types on the same join. `records read` is a sum over plan stages, 
 
 > INNER JOIN is faster than LEFT JOIN is faster than FULL OUTER JOIN.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `inner` | 14 | 35,339 | 1.0 | — | — | 1,552.5 | 1.0 | 638 MiB | 129,695,296 | 4 |
-| `left` | 14 | 35,015 | 0.9908 | 0.92 – 1.08 | 0.872 | 1,730 | 1.114 | 638 MiB | 129,695,296 | 4 |
-| `right` | 14 | 35,663.5 | 1.009 | 0.96 – 1.12 | 0.241 | 1,626 | 1.047 | 638 MiB | 129,695,296 | 4 |
-| `full_outer` | 14 | 34,515.5 | 0.9767 | 0.93 – 1.15 | 1.000 | 1,376 | 0.8863 | 638 MiB | 129,695,296 | 4 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `inner` | 14 | 2 | 35,339 | 1.0 | — | — | 1,552.5 | 1.0 | 638 MiB | 129,695,296 | 4 |
+| `left` | 14 | 2 | 35,015 | 0.9904 | 0.92 – 1.08 | 0.651 | 1,730 | 1.114 | 638 MiB | 129,695,296 | 4 |
+| `right` | 14 | 2 | 35,663.5 | 1.051 | 0.97 – 1.13 | 0.240 | 1,626 | 1.047 | 638 MiB | 129,695,296 | 4 |
+| `full_outer` | 14 | 2 | 34,515.5 | 1.052 | 0.93 – 1.13 | 1.000 | 1,376 | 0.8863 | 638 MiB | 129,695,296 | 4 |
 
 plans identical · records identical · billed bytes identical
 
@@ -116,11 +126,11 @@ The right side filtered hard, so LEFT must emit ~23M unmatched rows. Read the sl
 
 > Same claim, but where the join types genuinely return different row counts.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `inner` | 14 | 64,032 | 1.0 | — | — | 894 | 1.0 | 458 MiB | 44,771,628 | 4 |
-| `left` | 14 | 42,376.5 | 0.6618 | 0.53 – 1.15 | 0.070 | 890.5 | 0.9961 | 458 MiB | 45,056,144 | 4 |
-| `full_outer` | 14 | 31,631.5 | 0.494 | 0.40 – 0.77 | 0.000 | 864 | 0.9664 | 458 MiB | 64,778,381 | 4 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `inner` | 14 | 2 | 64,032 | 1.0 | — | — | 894 | 1.0 | 458 MiB | 44,771,628 | 4 |
+| `left` | 14 | 2 | 42,376.5 | 0.7255 | 0.49 – 1.15 | 0.058 | 890.5 | 0.9961 | 458 MiB | 45,056,144 | 4 |
+| `full_outer` | 14 | 2 | 31,631.5 | 0.5144 | 0.34 – 0.77 | 0.000 | 864 | 0.9664 | 458 MiB | 64,778,381 | 4 |
 
 plans differ · records not comparable · billed bytes identical
 
@@ -130,10 +140,10 @@ plans differ · records not comparable · billed bytes identical
 
 > Prefer DISTINCT over GROUP BY (low cardinality: 127 distinct values).
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `distinct` | 18 | 1,510 | 1.0 | — | — | 529 | 1.0 | 176 MiB | 23,020,127 | 1 |
-| `group_by` | 18 | 1,626.5 | 1.077 | 0.81 – 1.34 | 0.384 | 597 | 1.129 | 176 MiB | 23,020,127 | 1 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `distinct` | 18 | 2 | 1,510 | 1.0 | — | — | 529 | 1.0 | 176 MiB | 23,020,127 | 1 |
+| `group_by` | 18 | 2 | 1,626.5 | 0.9646 | 0.86 – 1.37 | 0.382 | 597 | 1.129 | 176 MiB | 23,020,127 | 1 |
 
 plans identical · records identical · billed bytes identical
 
@@ -141,10 +151,10 @@ plans identical · records identical · billed bytes identical
 
 > Prefer DISTINCT over GROUP BY (two columns, ~5M groups).
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `distinct` | 18 | 26,496 | 1.0 | — | — | 2,136 | 1.0 | 348 MiB | 40,887,142 | 3 |
-| `group_by` | 18 | 26,565 | 1.003 | 0.83 – 1.20 | 1.000 | 2,133 | 0.9986 | 348 MiB | 40,887,142 | 3 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `distinct` | 18 | 2 | 26,496 | 1.0 | — | — | 2,136 | 1.0 | 348 MiB | 40,887,142 | 3 |
+| `group_by` | 18 | 2 | 26,565 | 0.9995 | 0.89 – 1.15 | 1.000 | 2,133 | 0.9986 | 348 MiB | 40,887,142 | 3 |
 
 plans not comparable · records not comparable · billed bytes identical
 
@@ -158,10 +168,10 @@ Both spellings return 8,448,317 rows.
 
 > Prefer DISTINCT over GROUP BY (high cardinality: 8.5M distinct tags).
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `distinct` | 18 | 49,922.5 | 1.0 | — | — | 3,357 | 1.0 | 605 MiB | 46,454,097 | 6 |
-| `group_by` | 18 | 50,046 | 1.002 | 0.83 – 1.21 | 0.862 | 3,181.5 | 0.9477 | 605 MiB | 46,114,543 | 6 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `distinct` | 18 | 2 | 49,922.5 | 1.0 | — | — | 3,357 | 1.0 | 605 MiB | 46,454,097 | 6 |
+| `group_by` | 18 | 2 | 50,046 | 0.9609 | 0.83 – 1.17 | 0.901 | 3,181.5 | 0.9477 | 605 MiB | 46,114,543 | 6 |
 
 plans not comparable · records not comparable · billed bytes identical
 
@@ -173,10 +183,10 @@ plans not comparable · records not comparable · billed bytes identical
 
 > Avoid CTEs - a CTE referenced once is slower than the equivalent subquery.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `cte` | 18 | 28,029 | 1.0 | — | — | 2,050.5 | 1.0 | 348 MiB | 37,128,813 | 3 |
-| `subquery` | 18 | 29,414.5 | 1.049 | 0.90 – 1.18 | 0.602 | 2,113.5 | 1.031 | 348 MiB | 37,128,813 | 3 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `cte` | 18 | 2 | 28,029 | 1.0 | — | — | 2,050.5 | 1.0 | 348 MiB | 37,128,813 | 3 |
+| `subquery` | 18 | 2 | 29,414.5 | 0.9974 | 0.88 – 1.19 | 0.617 | 2,113.5 | 1.031 | 348 MiB | 37,128,813 | 3 |
 
 plans not comparable · records not comparable · billed bytes identical
 
@@ -190,11 +200,11 @@ The case the folklore is actually about. CTE and subquery do the same work stage
 
 > Avoid CTEs, use temp tables - the multiply-referenced case.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `cte_3_refs` | 14 | 40,909 | 1.0 | — | — | 1,203 | 1.0 | 348 MiB | 74,257,782 | 9 |
-| `subquery_3_copies` | 14 | 39,856.5 | 0.9743 | 0.82 – 1.13 | 0.566 | 1,147 | 0.9534 | 348 MiB | 74,257,782 | 9 |
-| `temp_table_3_refs` | 14 | 52,185 | 1.276 | 1.09 – 1.44 | 0.001 | 5,563.5 | 4.625 | 420 MiB | 0 | n/a |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `cte_3_refs` | 14 | 2 | 40,909 | 1.0 | — | — | 1,203 | 1.0 | 348 MiB | 74,257,782 | 9 |
+| `subquery_3_copies` | 14 | 2 | 39,856.5 | 0.9218 | 0.81 – 1.16 | 0.416 | 1,147 | 0.9534 | 348 MiB | 74,257,782 | 9 |
+| `temp_table_3_refs` | 14 | 2 | 52,185 | 1.247 | 1.10 – 1.49 | 0.000 | 5,563.5 | 4.625 | 420 MiB | 0 | n/a |
 
 plans differ · records differ · billed bytes differ
 
@@ -204,10 +214,10 @@ The tables are 39.9 GB and 3.4 GB on disk, but that is not what this query reads
 
 > Start your joins with the largest table (2 tables: 39.9 GB vs 3.4 GB).
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `largest_first` | 18 | 40,989.5 | 1.0 | — | — | 1,076 | 1.0 | 458 MiB | 83,006,916 | 4 |
-| `smallest_first` | 18 | 42,485 | 1.036 | 0.88 – 1.17 | 0.862 | 1,087.5 | 1.011 | 458 MiB | 83,006,916 | 4 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `largest_first` | 18 | 2 | 40,989.5 | 1.0 | — | — | 1,076 | 1.0 | 458 MiB | 83,006,916 | 4 |
+| `smallest_first` | 18 | 2 | 42,485 | 1.025 | 0.84 – 1.14 | 0.950 | 1,087.5 | 1.011 | 458 MiB | 83,006,916 | 4 |
 
 plans identical · records identical · billed bytes identical
 
@@ -217,10 +227,10 @@ Runs opposite the advice, but at p = 0.24 this is directional only, not a measur
 
 > Start your joins with the largest table (3 tables).
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `largest_first` | 14 | 82,318 | 1.0 | — | — | 2,957 | 1.0 | 667 MiB | 188,160,325 | 7 |
-| `smallest_first` | 14 | 79,666 | 0.9678 | 0.87 – 1.03 | 0.241 | 2,958 | 1.0 | 667 MiB | 174,264,361 | 7 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `largest_first` | 14 | 2 | 82,318 | 1.0 | — | — | 2,957 | 1.0 | 667 MiB | 188,160,325 | 7 |
+| `smallest_first` | 14 | 2 | 79,666 | 0.9433 | 0.83 – 1.03 | 0.058 | 2,958 | 1.0 | 667 MiB | 174,264,361 | 7 |
 
 plans not comparable · records not comparable · billed bytes identical
 
@@ -234,10 +244,10 @@ A three-table star join against the same rows pre-joined. The folklore is about 
 
 > Denormalise five to eight tables for sub-second latency.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `star_join_3_tables` | 9 | 53,649 | 1.0 | — | — | 1,836 | 1.0 | 1,010 MiB | 94,109,279 | 7 |
-| `denormalised_1_table` | 9 | 6,017 | 0.1122 | 0.09 – 0.12 | 0.000 | 1,138 | 0.6198 | 854 MiB | 22,562,260 | 1 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `star_join_3_tables` | 9 | 1 | 53,649 | 1.0 | — | — | 1,836 | 1.0 | 1,010 MiB | 94,109,279 | 7 |
+| `denormalised_1_table` | 9 | 1 | 6,017 | 0.1122 | 0.09 – 0.12 | 0.000 | 1,138 | 0.6198 | 854 MiB | 22,562,260 | 1 |
 
 plans not comparable · records not comparable · billed bytes differ
 
@@ -251,11 +261,11 @@ Same 22.6M x 18.7M rows. The first two variants differ only in the key's storage
 
 > Cast string keys to INT64 for faster joins.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `int_join_int` | 9 | 29,174 | 1.0 | — | — | 1,227 | 1.0 | 458 MiB | 82,549,054 | 4 |
-| `string_join_string` | 9 | 40,306 | 1.382 | 1.20 – 1.58 | 0.002 | 1,247 | 1.016 | 504 MiB | 82,549,054 | 4 |
-| `cast_inside_the_join` | 9 | 30,258 | 1.037 | 0.87 – 1.18 | 0.930 | 1,167 | 0.9511 | 478 MiB | 82,549,054 | 4 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `int_join_int` | 9 | 1 | 29,174 | 1.0 | — | — | 1,227 | 1.0 | 458 MiB | 82,549,054 | 4 |
+| `string_join_string` | 9 | 1 | 40,306 | 1.382 | 1.20 – 1.58 | 0.002 | 1,247 | 1.016 | 504 MiB | 82,549,054 | 4 |
+| `cast_inside_the_join` | 9 | 1 | 30,258 | 1.037 | 0.87 – 1.18 | 0.930 | 1,167 | 0.9511 | 478 MiB | 82,549,054 | 4 |
 
 plans identical · records identical · billed bytes differ
 
@@ -265,10 +275,10 @@ The case anyone with an unmigrated schema actually has, and it settles what m7 c
 
 > You can CAST at query time instead of migrating the table.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `native_int64` | 9 | 24,416 | 1.0 | — | — | 787 | 1.0 | 458 MiB | 82,549,054 | 4 |
-| `cast_both_sides` | 9 | 26,961 | 1.104 | 1.05 – 1.17 | 0.000 | 753 | 0.9568 | 504 MiB | 82,549,054 | 4 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `native_int64` | 9 | 1 | 24,416 | 1.0 | — | — | 787 | 1.0 | 458 MiB | 82,549,054 | 4 |
+| `cast_both_sides` | 9 | 1 | 26,961 | 1.104 | 1.05 – 1.17 | 0.000 | 753 | 0.9568 | 504 MiB | 82,549,054 | 4 |
 
 plans identical · records identical · billed bytes differ
 
@@ -278,10 +288,10 @@ The single most useful measurement here: the bill does not move, the slot time c
 
 > LIMIT reduces bytes scanned.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `no_limit` | 10 | 324,459 | 1.0 | — | — | 21,047 | 1.0 | 1.80 GiB | 82,698,133 | 4 |
-| `limit_10` | 10 | 96.5 | 0.0002974 | 0 – 0 | 0.000 | 401 | 0.01905 | 1.80 GiB | 201,595 | 2 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `no_limit` | 10 | 2 | 324,459 | 1.0 | — | — | 21,047 | 1.0 | 1.80 GiB | 82,698,133 | 4 |
+| `limit_10` | 10 | 2 | 96.5 | 0.0003016 | 0.0002 – 0.00045 | 0.000 | 401 | 0.01905 | 1.80 GiB | 201,595 | 2 |
 
 plans differ · records not comparable · billed bytes identical
 
@@ -293,10 +303,10 @@ This myth's finding rests on billed bytes alone. The slot-time column is not evi
 
 > SELECT * costs more than naming the columns you need.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `two_columns` | 6 | 2,991.5 | 1.0 | — | — | 854.5 | 1.0 | 780 MiB | 23,020,127 | 1 |
-| `select_star` | 6 | 180.5 | 0.06034 | 0.04 – 0.14 | 0.045 | 325.5 | 0.3809 | 37.17 GiB | 134,498 | 2 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `two_columns` | 6 | 2 | 2,991.5 | 1.0 | — | — | 854.5 | 1.0 | 780 MiB | 23,020,127 | 1 |
+| `select_star` | 6 | 2 | 180.5 | 0.06033 | 0.04 – 0.37 | 0.123 | 325.5 | 0.3809 | 37.17 GiB | 134,498 | 2 |
 
 plans not comparable · records not comparable · billed bytes differ
 
@@ -308,11 +318,11 @@ plans not comparable · records not comparable · billed bytes differ
 
 > REGEXP_CONTAINS starts a regex engine per row to answer what = answers for free.
 
-| variant | n | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
-|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
-| `equality` | 18 | 7,677.5 | 1.0 | — | — | 1,142.5 | 1.0 | 605 MiB | 23,020,127 | 1 |
-| `like_exact` | 18 | 7,572 | 0.9863 | 0.90 – 1.26 | 0.987 | 1,024.5 | 0.8967 | 605 MiB | 23,020,127 | 1 |
-| `regexp` | 18 | 8,990 | 1.171 | 1.07 – 1.48 | 0.005 | 1,539.5 | 1.347 | 605 MiB | 23,020,279 | 2 |
+| variant | n | passes | slot-ms (median) | ratio | 95% CI | p | elapsed-ms (median) | wall ratio | billed | records read | stages |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| `equality` | 18 | 2 | 7,677.5 | 1.0 | — | — | 1,142.5 | 1.0 | 605 MiB | 23,020,127 | 1 |
+| `like_exact` | 18 | 2 | 7,572 | 1.001 | 0.88 – 1.25 | 0.901 | 1,024.5 | 0.8967 | 605 MiB | 23,020,127 | 1 |
+| `regexp` | 18 | 2 | 8,990 | 1.176 | 1.06 – 1.46 | 0.006 | 1,539.5 | 1.347 | 605 MiB | 23,020,279 | 2 |
 
 plans not comparable · records not comparable · billed bytes identical
 
