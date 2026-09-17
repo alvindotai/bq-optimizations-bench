@@ -9,12 +9,13 @@ Two different objections, two different checks:
                    the data? Free, no credentials.
 """
 import json
+import re
 import statistics
 import urllib.request
 from collections import Counter, defaultdict
 
 from .. import client, matrix, paths
-from ..config import LOCATION, require_project
+from ..config import DATASET, LOCATION, require_project
 
 HELP = "verify query semantics, or that the code still matches the results"
 
@@ -102,30 +103,43 @@ def _read_records(paths_):
 
 
 def _positional_bias(records):
-    """Are variants measured second systematically faster or slower?
+    """Is a query systematically slower because of WHERE IT SAT in the schedule?
 
-    The schedule rotates variant order per repetition, so this should sit at
-    1.0. It is computed over the two-variant comparisons that found no effect,
-    since those are the ones where a positional artefact would show up
-    undisguised.
+    Measured from the order the jobs actually ran in (`ts`), not from the order
+    `matrix.py` declares its variants - those coincide only in a run made before
+    the runner rotated, and an estimator keyed on declaration order silently
+    stops measuring anything once rotation is on.
+
+    Each job is divided by its own variant's median, which removes the effect of
+    the SQL and leaves only position. Those normalised values are then averaged
+    per slot within the repetition, and the figure reported is the spread across
+    slots: 1.0 means position cost nothing.
+
+    Note what this can and cannot see. It is an average over every comparison,
+    so a bias confined to one comparison is diluted, and slot-ms is noisy enough
+    at these sample sizes that only a systematic effect of a few percent or more
+    will surface. It bounds a schedule artefact; it does not rule one out.
     """
-    by_variant = defaultdict(list)
+    baseline = defaultdict(list)
     for r in records:
-        by_variant[(r["myth"], r["variant"])].append(r["slot_ms"])
+        baseline[(r["myth"], r["variant"])].append(r["slot_ms"])
+    medians = {k: statistics.median(v) for k, v in baseline.items()}
 
-    ratios = []
-    for entry in matrix.ALL:
-        names = [n for n, _ in entry["variants"]]
-        if len(names) != 2:
+    groups = defaultdict(list)
+    for r in records:
+        groups[(r["myth"], r["run_id"], r["rep"])].append(r)
+
+    by_slot = defaultdict(list)
+    for members in groups.values():
+        if len(members) < 2:
             continue
-        try:
-            first, second = (statistics.median(by_variant[(entry["key"], n)])
-                             for n in names)
-        except statistics.StatisticsError:
-            continue
-        if first and 0.9 < second / first < 1.1:      # comparisons finding ~no effect
-            ratios.append(second / first)
-    return statistics.mean(ratios) if ratios else None
+        for position, r in enumerate(sorted(members, key=lambda x: x["ts"])):
+            median = medians[(r["myth"], r["variant"])]
+            if median:
+                by_slot[position].append(r["slot_ms"] / median)
+
+    means = [statistics.mean(v) for _, v in sorted(by_slot.items()) if v]
+    return max(means) / min(means) if len(means) > 1 and min(means) else None
 
 
 def _reproducibility():
@@ -142,10 +156,10 @@ def _reproducibility():
                 + _check_run_conditions(records)
                 + _check_repetitions(records))
     bias = _positional_bias(records)
-    if bias is not None and not 0.95 <= bias <= 1.05:
+    if bias is not None and bias > 1.10:
         failures.append(
-            f"variants measured second are {bias:.3f}x the first on comparisons "
-            "that found no effect - the schedule may be biasing the measurement")
+            f"a variant's position in the schedule moved its slot time by "
+            f"{bias:.3f}x - the schedule may be biasing the measurement")
 
     counts = Counter((r["myth"], r["variant"]) for r in records)
     print(f"records          {len(records):,}")
@@ -159,6 +173,16 @@ def _reproducibility():
         for failure in failures:
             print("  -", failure)
         return 1
+
+    outstanding = _outstanding(records)
+    if outstanding:
+        print("\nDECLARED BUT NOT MEASURED - these are defined in matrix.py and\n"
+              "absent from this results/ on purpose. Close one with:")
+        for m in outstanding:
+            which = "followups" if m in matrix.FOLLOWUPS else "core"
+            print(f"  - {m['key']}\n"
+                  f"      python3 -m bqbench run --matrix {which} "
+                  f"--only {m['key']}")
     print("\nOK - matrix.py reproduces every recorded query; run conditions hold.")
     return 0
 
@@ -176,22 +200,47 @@ def _result_files():
     return candidates
 
 
+#: A fixture reference carries whichever project rendered it, so the same query
+#: reads `my-project.bq_myth_bench.n_posts` for you and
+#: `example-project.bq_myth_bench.n_posts` in the published records. Comparing
+#: those literally reports drift for all five fixture variants the moment
+#: BENCH_PROJECT is set - which is every real run.
+_FIXTURE_REF = re.compile(r"`[^`.]+\.(" + re.escape(DATASET) + r")\.")
+
+
+def _comparable(sql):
+    """SQL with the billing project neutralised, so only real drift shows."""
+    return _FIXTURE_REF.sub(r"`<project>.\1.", sql)
+
+
 def _check_sql_matches(published, complete):
     """Every recorded query is still generated, unchanged, by the matrix.
 
     `complete` says whether these records are a full run; only then is a query
     the matrix defines but the results lack a real failure.
     """
-    built = {(m["key"], name): sql for m in matrix.ALL for name, sql in m["variants"]}
+    built = {(m["key"], name): sql for m in matrix.ALL for name, sql in m["variants"]
+             if m.get("measured", True)}
     failures = [f"in results but not in matrix.py: {k[0]}/{k[1]}"
                 for k in sorted(set(published) - set(built))]
     failures += [f"SQL drifted since the run: {k[0]}/{k[1]}"
                  for k in sorted(set(built) & set(published))
-                 if built[k] != published[k]]
+                 if _comparable(built[k]) != _comparable(published[k])]
     if complete:
         failures += [f"in matrix.py but never run: {k[0]}/{k[1]}"
                      for k in sorted(set(built) - set(published))]
     return failures
+
+
+def _outstanding(records):
+    """Comparisons this repository defines but has not measured.
+
+    Declared with `measured=False`, so they are a stated gap rather than drift,
+    and they are reported with the command that closes them.
+    """
+    seen = {r["myth"] for r in records}
+    return [m for m in matrix.ALL
+            if not m.get("measured", True) and m["key"] not in seen]
 
 
 def _check_run_conditions(records):
@@ -205,8 +254,15 @@ def _check_run_conditions(records):
     return failures
 
 
+#: The repetition range METHODOLOGY.md and RESULTS.md both quote. Asserted, not
+#: assumed: a run that silently came out at n = 3 would leave every document
+#: claiming a sample size the data does not have.
+MIN_REPS, MAX_REPS = 6, 18
+
+
 def _check_repetitions(records):
-    """Enough repetitions, and none of them a cache hit in disguise."""
+    """Enough repetitions, balanced across a comparison, and none of them a
+    cache hit in disguise."""
     counts = Counter((r["myth"], r["variant"]) for r in records)
     slots = defaultdict(set)
     for r in records:
@@ -215,39 +271,19 @@ def _check_repetitions(records):
     frozen = [k for k, v in slots.items() if len(v) == 1 and counts[k] > 2]
     if frozen:
         failures.append(f"suspiciously constant slot_ms (cached run?): {frozen[:3]}")
-    return failures
 
+    outside = sorted(k for k, n in counts.items() if not MIN_REPS <= n <= MAX_REPS)
+    if outside:
+        failures.append(
+            f"repetition count outside the documented {MIN_REPS}-{MAX_REPS}: "
+            + ", ".join(f"{m}/{v} n={counts[(m, v)]}" for m, v in outside[:3]))
 
-def _read_records(paths_):
-    records = []
-    for path in paths_:
-        with open(path) as fh:
-            records.extend(json.loads(line) for line in fh if line.strip())
-    return records
-
-
-def _positional_bias(records):
-    """Are variants measured second systematically faster or slower?
-
-    The schedule rotates variant order per repetition, so this should sit at
-    1.0. It is computed over the two-variant comparisons that found no effect,
-    since those are the ones where a positional artefact would show up
-    undisguised.
-    """
-    by_variant = defaultdict(list)
-    for r in records:
-        by_variant[(r["myth"], r["variant"])].append(r["slot_ms"])
-
-    ratios = []
+    # A comparison whose variants have different n is not a paired measurement;
+    # a job that failed and was dropped would show up here and nowhere else.
     for entry in matrix.ALL:
-        names = [n for n, _ in entry["variants"]]
-        if len(names) != 2:
-            continue
-        try:
-            first, second = (statistics.median(by_variant[(entry["key"], n)])
-                             for n in names)
-        except statistics.StatisticsError:
-            continue
-        if first and 0.9 < second / first < 1.1:      # comparisons finding ~no effect
-            ratios.append(second / first)
-    return statistics.mean(ratios) if ratios else None
+        present = {n: counts[(entry["key"], n)]
+                   for n, _ in entry["variants"] if counts[(entry["key"], n)]}
+        if len(set(present.values())) > 1:
+            failures.append(
+                f"{entry['key']} has unequal repetitions per variant: {present}")
+    return failures

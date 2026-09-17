@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bqbench"
-version = "1.0.1"
+version = "1.1.0"
 description = "Benchmarks for BigQuery query-optimization folklore"
 readme = "README.md"
 license = { text = "Apache-2.0" }

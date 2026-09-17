@@ -32,15 +32,17 @@ def main(args):
     print()
     print(f"  wide table         {b['wide_bytes']/2**30:>7.3f} GiB")
     print(f"  3 normalised       {b['normalised_bytes']/2**30:>7.3f} GiB   "
-          f"-> denormalising costs {b['storage_overhead_pct']:+.1f}% storage")
-    print(f"  extra storage      ${b['storage_usd_month']:>7.3f}/month")
+          f"-> the duplication is {b['storage_overhead_pct']:+.1f}%")
+    print(f"  wide table storage ${b['storage_usd_month']:>7.3f}/month   "
+          f"(additive: the rebuild reads the 3, so they stay)")
     print(f"  nightly rebuild    ${b['nightly_usd_month']:>7.3f}/month   "
-          f"({b['nightly_vs_storage']:.0f}x the storage)")
+          f"({b['nightly_vs_storage']:.0f}x that storage)")
     print()
-    print("  Columnar compression absorbs nearly all the duplication, so the cost")
-    print("  everyone warns about is noise. The binding constraint is refresh")
-    print("  frequency: below the break-even above, the rebuild costs more than")
-    print("  the reads save.")
+    print("  The duplication everyone warns about is small - the user columns")
+    print("  repeat across posts, but a narrow row repeated is still narrow. The")
+    print("  three sources cannot be dropped either, since the rebuild joins")
+    print("  them. Neither binds: refresh frequency does. Below the break-even")
+    print("  above, the rebuild costs more than the reads save.")
 
     total = pricing.total_cost(sorted(paths.RESULTS.glob("*.jsonl")),
                                rebuilds, args.price)

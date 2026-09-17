@@ -71,6 +71,22 @@ def _request(method, url, body=None):
     raise AssertionError("unreachable")
 
 
+def create_dataset(project, dataset, location="US", description=None):
+    """Create a dataset, treating "already exists" as success.
+
+    Returns True if this call created it. Free.
+    """
+    body = {"datasetReference": {"projectId": project, "datasetId": dataset},
+            "location": location}
+    if description:
+        body["description"] = description
+    try:
+        _request("POST", f"{API}/projects/{project}/datasets", body)
+    except AlreadyExistsError:
+        return False
+    return True
+
+
 def dry_run(sql, project, location="US"):
     """Bytes BigQuery says it would read. Free, and the honest way to price a
     run before making it. Note this is bytes *processed*; billing applies a
@@ -146,7 +162,9 @@ def _statistics(job, job_id, project, location):
         "statement_type": query.get("statementType"),
         # snake_case in the REST payload, unlike its neighbours
         "reservation": stats.get("reservation_id") or "ON_DEMAND",
-        "edition": query.get("edition"),
+        # JobStatistics.edition, not JobStatistics2 - reading it off `query`
+        # returns None for every job and makes the on-demand check vacuous.
+        "edition": stats.get("edition"),
         "num_stages": len(plan),
         "plan_steps": [s.get("name") for s in plan],
         # (stage, recordsRead, recordsWritten, shuffleOutputBytes) - the work

@@ -26,6 +26,7 @@ def add_arguments(p):
 
 def main(args):
     project = require_project()
+    _ensure_dataset(project)
     template = (paths.SQL / "fixtures.sql").read_text()
     sql = string.Template(template).substitute(PROJECT=project, DATASET=DATASET)
 
@@ -42,6 +43,21 @@ def main(args):
         _record_sizes(project)
     print("\nFixtures ready. Next: python3 -m bqbench run --matrix core")
     return 0
+
+
+def _ensure_dataset(project):
+    """Create $BENCH_DATASET if it is not there yet.
+
+    The README says this command creates it, and the first `CREATE OR REPLACE
+    TABLE` fails with a bare `notFound` if it does not - which is what a new
+    reader hits on their first run, with nothing to tell them the dataset was
+    the missing piece. Creating an existing dataset returns 409, which is the
+    success case here.
+    """
+    if client.create_dataset(
+            project, DATASET, LOCATION,
+            description="bq-optimizations-bench fixtures for myths 6 and 7"):
+        print(f"created dataset {project}.{DATASET} ({LOCATION})")
 
 
 def _record_sizes(project):

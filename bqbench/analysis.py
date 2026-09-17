@@ -13,13 +13,15 @@ Three properties matter more than the timings:
 
 The two stability flags exist because neither property can be assumed. BigQuery
 varies the plan run to run (dynamic repartitioning, single-stage collapse), and
-a query that short-circuits - anything with a LIMIT - reads a different number
-of records each time. Where a stability flag is false, the corresponding
-identity claim is measuring noise and must not be made.
+the record counts move with it: a query behind a LIMIT short-circuits at a
+different point each run, and a plan that collapses to one stage reports fewer
+per-stage reads for exactly the same work. Where a stability flag is false, the
+corresponding identity claim is measuring noise and must not be made.
 """
 import json
+import math
 import statistics
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 
 from .stats import mann_whitney_u, median_ratio_ci
 
@@ -29,6 +31,7 @@ from .stats import mann_whitney_u, median_ratio_ci
 REQUIRED_VARIANT_KEYS = frozenset({
     "n", "slot_ms_median", "ratio_vs_base", "p_vs_base", "ratio_ci",
     "bytes_billed", "records_read", "stages",
+    "elapsed_ms_median", "elapsed_ratio_vs_base",
 })
 REQUIRED_BLOCK_KEYS = frozenset({
     "claim", "plans_identical", "work_identical", "bytes_identical",
@@ -88,7 +91,8 @@ def _compare(variants, info):
 
     baseline_slots = [r["slot_ms"] for r in variants[names[0]]]
     baseline_median = statistics.median(baseline_slots)
-    plans = {n: variants[n][0]["plan_steps"] for n in names}
+    baseline_elapsed = statistics.median(r["elapsed_ms"] for r in variants[names[0]])
+    plans = {n: _modal_plan(variants[n]) for n in names}
     plan_stable = {n: len({tuple(r["plan_steps"]) for r in variants[n]}) == 1
                    for n in names}
     work_stable = {n: len({_work_of(r) for r in variants[n]}) == 1 for n in names}
@@ -97,6 +101,7 @@ def _compare(variants, info):
         (n, _variant(variants[n], plans[n],
                      plan_stable=plan_stable[n], work_stable=work_stable[n],
                      baseline_median=baseline_median,
+                     baseline_elapsed=baseline_elapsed,
                      baseline_slots=None if n == names[0] else baseline_slots))
         for n in names)
 
@@ -113,16 +118,36 @@ def _compare(variants, info):
     }
 
 
+def _modal_plan(runs):
+    """The stage sequence this variant produced most often.
+
+    Not the first repetition's. BigQuery varies the plan run to run, so any
+    single draw is a lottery: on the published data, picking the first record
+    rather than the modal one flips the plan-identity verdict in four of the
+    nineteen comparisons. The mode is still only a summary of an unstable
+    quantity - `plan_stable_across_reps` says whether it meant anything.
+    """
+    counts = Counter(tuple(r["plan_steps"]) for r in runs)
+    return list(counts.most_common(1)[0][0])
+
+
 def _variant(runs, plan, *, plan_stable, work_stable,
-             baseline_median, baseline_slots):
+             baseline_median, baseline_elapsed, baseline_slots):
     slots = sorted(r["slot_ms"] for r in runs)
     median = statistics.median(slots)
+    elapsed = statistics.median(r["elapsed_ms"] for r in runs)
     read, written, shuffled = _work(runs)
     return {
         "n": len(runs),
         "slot_ms_median": median,
         "slot_ms_min": slots[0],
         "slot_ms_max": slots[-1],
+        # Wall clock. Slot-ms is aggregate slot consumption across parallel
+        # workers, which is what capacity pricing bills and what a "slower"
+        # claim is usually NOT about. These two disagree often enough that
+        # publishing only the first would misdescribe several results.
+        "elapsed_ms_median": elapsed,
+        "elapsed_ratio_vs_base": _ratio(elapsed, baseline_elapsed),
         "bytes_processed": _one_or_all(r["bytes_processed"] for r in runs),
         "bytes_billed": _one_or_all(r["bytes_billed"] for r in runs),
         "records_read": read,
@@ -131,13 +156,30 @@ def _variant(runs, plan, *, plan_stable, work_stable,
         "stages": len(plan),
         "plan_stable_across_reps": plan_stable,
         "work_stable_across_reps": work_stable,
-        "ratio_vs_base": round(median / baseline_median, 3) if baseline_median else None,
+        "ratio_vs_base": _ratio(median, baseline_median),
         "p_vs_base": None if baseline_slots is None else round(
             mann_whitney_u(baseline_slots, slots) or 1.0, 4),
         # How large a difference could have hidden here? The p-value does not
         # say, and at n = 6..18 the answer is often "quite a lot".
         "ratio_ci": _ci(baseline_slots, slots),
     }
+
+
+def _ratio(value, baseline):
+    """Three decimal places, or four significant figures, whichever keeps more.
+
+    `LIMIT` collapses slot time by three orders of magnitude; at 3 dp that ratio
+    prints as 0.0, which tells the reader nothing. Three significant figures is
+    not enough either - it rounds to 0.000297, which inverts to 3,367x rather
+    than the 3,362x the prose quotes, and a reader who checks will find the
+    table and the text disagreeing. Ratios near 1 keep their three decimals.
+    """
+    if not baseline:
+        return None
+    ratio = value / baseline
+    if not ratio:
+        return 0.0
+    return round(ratio, max(3, 4 - math.ceil(math.log10(abs(ratio)))))
 
 
 def _ci(baseline_slots, slots):

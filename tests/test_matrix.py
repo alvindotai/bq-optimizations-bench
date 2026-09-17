@@ -11,6 +11,9 @@ os.environ.setdefault("BENCH_PROJECT", "example-project")
 
 from bqbench import matrix, paths  # noqa: E402  - after the env default above
 
+#: METHODOLOGY spells these out, so the pin has to as well.
+_NUMBER_WORD = {9: "Nine", 10: "Ten", 11: "Eleven", 12: "Twelve", 13: "Thirteen"}
+
 
 class Structure(unittest.TestCase):
     def test_keys_are_unique(self):
@@ -104,10 +107,6 @@ class Selection(unittest.TestCase):
         self.assertIn("core", str(caught.exception))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DocumentedCounts(unittest.TestCase):
     """Figures quoted in README.md and METHODOLOGY.md are derived from a run, so
     they drift silently when the analysis changes. Pin the ones the prose
@@ -120,14 +119,49 @@ class DocumentedCounts(unittest.TestCase):
         with open(paths.SUMMARY) as fh:
             cls.summary = json.load(fh)
 
-    def test_comparison_count_matches_the_matrix(self):
-        self.assertEqual(len(self.summary), len(matrix.ALL))
+    def test_every_measured_comparison_is_in_the_summary(self):
+        """An unmeasured comparison is a declared gap; a missing measured one is
+        the drift this whole class exists to catch."""
+        measured = {m["key"] for m in matrix.ALL if m.get("measured", True)}
+        self.assertEqual(set(self.summary), measured)
+
+    def test_an_unmeasured_comparison_says_why_in_its_note(self):
+        for m in matrix.ALL:
+            if not m.get("measured", True):
+                self.assertTrue(m["note"].strip(), m["key"])
 
     def test_documented_stability_and_byte_counts_still_hold(self):
         unstable_plans = sum(1 for d in self.summary.values() if not d["plans_stable"])
         unstable_work = sum(1 for d in self.summary.values() if not d["work_stable"])
         identical_bytes = sum(1 for d in self.summary.values() if d["bytes_identical"])
+        total = len(self.summary)
         readme = (pathlib.Path(__file__).resolve().parent.parent / "README.md").read_text()
-        self.assertIn(f"{unstable_plans} of 19", readme)
-        self.assertIn(f"{identical_bytes} of the 19", readme)
-        self.assertEqual(unstable_work, 10)
+        self.assertIn(f"{unstable_plans} of {total}", readme)
+        self.assertIn(f"{identical_bytes} of the {total}", readme)
+        self.assertIn(f"in {unstable_work} the record counts moved", readme)
+
+    def test_methodology_tallies_still_hold(self):
+        """METHODOLOGY quotes two counts the analysis can silently move."""
+        both = sum(1 for d in self.summary.values()
+                   if d["plans_identical"] and d["work_identical"])
+        excluding_one = sum(
+            1 for d in self.summary.values() for v in d["variants"].values()
+            if v["ratio_ci"] and not v["ratio_ci"][0] <= 1.0 <= v["ratio_ci"][1])
+        tests = sum(len(d["variants"]) - 1 for d in self.summary.values())
+        doc = (pathlib.Path(__file__).resolve().parent.parent
+               / "METHODOLOGY.md").read_text()
+        self.assertIn(f"identical record counts: {both} of {len(self.summary)}", doc)
+        self.assertIn(f"Bonferroni correction across {tests} tests", doc)
+        self.assertIn(f"{_NUMBER_WORD[excluding_one]} ratios have a CI excluding 1.0", doc)
+
+    def test_every_variant_carries_both_timing_meters(self):
+        """A slot-ms ratio published without its wall-clock counterpart is how
+        "1.38x slower" gets written about a query that took the same time."""
+        for key, block in self.summary.items():
+            for name, v in block["variants"].items():
+                self.assertIsNotNone(v["elapsed_ms_median"], f"{key}/{name}")
+                self.assertIsNotNone(v["elapsed_ratio_vs_base"], f"{key}/{name}")
+
+
+if __name__ == "__main__":
+    unittest.main()

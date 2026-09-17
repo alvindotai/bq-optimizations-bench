@@ -110,10 +110,6 @@ class ByteFormatting(unittest.TestCase):
         self.assertEqual(analysis.format_bytes([2**20, 2 * 2**20]), "1 MiB / 2 MiB")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SummarySchema(unittest.TestCase):
     """A summary is derived: an old one must be refused, not crash a consumer."""
 
@@ -154,3 +150,7 @@ class SummarySchema(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             analysis.load_summary(self._write(summary))
         self.assertIn("bqbench analyze", str(caught.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()

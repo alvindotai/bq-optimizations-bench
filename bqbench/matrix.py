@@ -23,7 +23,7 @@ FOLLOWUPS = []
 _target = CORE
 
 
-def myth(key, claim, title, variants, *, reps=9, note=""):
+def myth(key, claim, title, variants, *, reps=9, note="", measured=True):
     """Register one comparison.
 
     key       stable identifier; appears in every result record
@@ -32,9 +32,16 @@ def myth(key, claim, title, variants, *, reps=9, note=""):
     variants  [(name, sql), ...]; the first is the baseline the rest are
               reported against
     note      what a reader needs to know to read the numbers honestly
+    measured  False for a comparison this repository defines but the published
+              run does not contain. `verify reproducibility` then reports it as
+              an outstanding measurement rather than as drift - the difference
+              between "someone changed the code and never re-ran it" and "we
+              know this is missing and here is the command". Flip it to True in
+              the same commit that publishes the records.
     """
     _target.append({"key": key, "claim": claim, "title": title,
-                    "variants": variants, "reps": reps, "note": note})
+                    "variants": variants, "reps": reps, "note": note,
+                    "measured": measured})
 
 
 # ── M1 ── "BigQuery doesn't optimize the WHERE clause; order filters most-eliminating first"
@@ -82,8 +89,9 @@ myth("m1_costly_predicate",
 
 # ── M2 ── "INNER JOIN is faster than LEFT, which is faster than OUTER"
 # 2a: badges->users matches 46,135,068 of 46,135,386 rows, so INNER and LEFT
-# return effectively the SAME result set (318 rows apart, 0.0007%). Any cost
-# difference here is attributable to the keyword alone.
+# return effectively the SAME result set (318 rows apart, 0.0007%). RIGHT and
+# FULL OUTER emit ~10M more, so this is not four spellings of one query - it is
+# four join types over one join, which is the claim being tested.
 _m2a = ("SELECT COUNT(*) AS n, SUM(u.reputation) AS r "
         f"FROM {B} b {{}} JOIN {U} u ON b.user_id = u.id").format
 myth("m2a_jointype_same_rows",
@@ -92,10 +100,13 @@ myth("m2a_jointype_same_rows",
      [("inner", _m2a("INNER")), ("left", _m2a("LEFT")),
       ("right", _m2a("RIGHT")), ("full_outer", _m2a("FULL OUTER"))],
      reps=7,
-     note="All four join types on the same join. The record counts below are the"
-          " **input** scan (46,135,386 badges + 18,712,212 users); the join outputs"
-          " genuinely differ - 46,135,068 / 46,135,386 / 56,180,984 / 56,181,302."
-          " FULL OUTER emits ten million more rows for the same cost.")
+     note="All four join types on the same join. `records read` is a sum over"
+          " plan stages, so it counts each row twice - once where it is scanned"
+          " and once where the join stage reads it back off the shuffle. The rows"
+          " actually scanned are 64,847,598 (46,135,386 badges + 18,712,212"
+          " users). The join outputs genuinely differ - 46,135,068 / 46,135,386 /"
+          " 56,180,984 / 56,181,302 - so FULL OUTER emits ten million more rows"
+          " for the same billed bytes and the same wall clock.")
 
 # 2b: the same join with the right side filtered hard, so LEFT must emit ~23M
 # unmatched rows while INNER emits far fewer. Isolates output cardinality as the
@@ -108,7 +119,12 @@ myth("m2b_jointype_diff_rows",
      "Myth 2 control — result sets differ by construction",
      [("inner", _m2b("INNER")), ("left", _m2b("LEFT")), ("full_outer", _m2b("FULL OUTER"))],
      reps=7,
-     note="The right side filtered hard, so LEFT must emit ~23M unmatched rows.")
+     note="The right side filtered hard, so LEFT must emit ~23M unmatched rows."
+          " Read the slot ordering with care: INNER and LEFT plan a `Coalesce`"
+          " stage (the small filtered side is broadcast) while FULL OUTER plans"
+          " two `Input` stages and shuffles. So FULL OUTER's lower slot time is a"
+          " different join ALGORITHM, not a property of the keyword - and the"
+          " wall clock is flat across all three (894 / 890 / 864 ms) regardless.")
 
 # ── M3 ── "Prefer DISTINCT over GROUP BY"
 _m3_hi_d = f"SELECT COUNT(*) AS n FROM (SELECT DISTINCT tags FROM {Q})"
@@ -156,10 +172,15 @@ myth("m4b_cte_referenced_thrice",
       ("temp_table_3_refs",
        "CREATE TEMP TABLE heavy AS " + _heavy + ";\n" + _fanout.format(h="heavy") + ";")],
      reps=7,
-     note="The case the folklore is actually about. Both spellings re-read the CTE"
-          " (74,257,782 records, ~3x the 23M base) and cost the same; the temp"
-          " table is worse on both slot time and bytes. Temp-table stages are n/a:"
-          " a script's work lives in child jobs, which carry no parent-level plan.")
+     note="The case the folklore is actually about. CTE and subquery do the same"
+          " work stage for stage and bill the same 348 MiB - the base table is"
+          " scanned twice and the 5.2M-row aggregate read back twice, which is"
+          " what the 74,257,782 stage-sum is made of. The temp table is worse on"
+          " every meter, and the cost is the write, not the read-back: its"
+          " `CREATE TEMP TABLE` child job burns 51,918 slot-ms while all three"
+          " references together burn 268. Temp-table stages are n/a: a script's"
+          " work lives in child jobs, which carry no parent-level plan, and the"
+          " `records read` of 0 is that absence, not a measurement.")
 
 # ── M5 ── "Start your joins with the largest table"
 _m5_2t_big = ("SELECT COUNT(*) AS n, SUM(u.reputation) AS r "
@@ -177,7 +198,12 @@ myth("m5_join_order_2t",
      "Start your joins with the largest table (2 tables: 39.9 GB vs 3.4 GB).",
      "Myth 5 — start joins with the largest table",
      [("largest_first", _m5_2t_big), ("smallest_first", _m5_2t_sml)],
-     note="39.9 GB against 3.4 GB.")
+     note="The tables are 39.9 GB and 3.4 GB on disk, but that is not what this"
+          " query reads: it touches two columns of each, and after column pruning"
+          " the *smaller* table contributes the larger input (18,712,212 rows and"
+          " 336 MiB of shuffle, against 23,020,127 rows and 203 MiB). So this"
+          " tests the advice as written - which table you name first - not a"
+          " genuine large-against-small asymmetry.")
 myth("m5_join_order_3t",
      "Start your joins with the largest table (3 tables).",
      "Myth 5 — three tables",
@@ -186,7 +212,9 @@ myth("m5_join_order_3t",
      note="Runs opposite the advice, but at p = 0.24 this is directional only, not"
           " a measured win.")
 
-# ── Bonus: claims Article 1 states as fact in §3.3 / §3.4 and should back ──
+# ── Controls ── three claims that are stated as fact often enough to be
+# worth measuring, and that bound the other results: one where bytes SHOULD
+# move and don't, one where they should and do, and one cheap/expensive pair.
 myth("b1_limit_bytes",
      "LIMIT reduces bytes scanned.",
      "Control — LIMIT reduces bytes scanned",
@@ -194,7 +222,9 @@ myth("b1_limit_bytes",
       ("limit_10", f"SELECT title, tags FROM {Q} LIMIT 10")],
      reps=5,
      note="The single most useful measurement here: the bill does not move, the"
-          " slot time collapses.")
+          " slot time collapses. Note what the slots were being spent on - the"
+          " no-LIMIT plan shuffles and materialises all 23M rows, so this is the"
+          " cost of delivering a result set, not of scanning a table.")
 
 myth("b2_predicate_cost",
      "REGEXP_CONTAINS starts a regex engine per row to answer what = answers for free.",
@@ -233,7 +263,14 @@ myth("m7_key_types",
        f"FROM {_f('k_posts_str')} p JOIN {_f('k_users_int')} u "
        f"ON CAST(p.owner_user_id AS INT64) = u.id")],
      reps=9,
-     note="Same 22.6M x 18.7M rows; only the key's storage type differs.")
+     note="Same 22.6M x 18.7M rows. The first two variants differ only in the"
+          " key's storage type. The third does not: it joins the STRING posts"
+          " table to the INT64 users table, so it adds the CAST *and* takes one"
+          " side already migrated. It shows that leaving one side as STRING costs"
+          " nothing beyond that side's extra bytes; it does not test casting both."
+          " Note also that the 1.38x is slot time - wall clock was 1,227 vs 1,247"
+          " ms - while the bill moved 458 -> 504 MiB, which is the 10% that is"
+          " actually money on on-demand.")
 
 _m6_star = (
     "SELECT u.location, COUNT(*) AS posts, SUM(p.view_count) AS views, "
@@ -254,8 +291,11 @@ myth("m6_denormalisation",
      "Myth 6 — denormalise for sub-second latency",
      [("star_join_3_tables", _m6_star), ("denormalised_1_table", _m6_flat)],
      reps=9,
-     note="A three-table star join against the same rows pre-joined. See the"
-          " break-even below.")
+     note="A three-table star join against the same rows pre-joined. The folklore"
+          " is about latency, so read the wall-clock column: 1,836 ms against"
+          " 1,138 ms, a 1.6x gain, and neither is sub-second (3 of 9 denormalised"
+          " runs came in under a second). The 8.9x is slot time, and on-demand"
+          " bills bytes, where the gain is 1.18x. See the break-even below.")
 
 
 # ============================================================================
@@ -303,7 +343,36 @@ myth("m1e_regex_vs_cheaper_rewrite",
                     "OR LOWER(title) LIKE '%redshift%')"))],
      reps=11,
      note="Three `LOWER() LIKE` clauses against the single regex they replace. The"
-          " obvious fix is worse than the thing it fixes.")
+          " obvious fix is worse than the thing it fixes. Note these two are NOT"
+          " semantically identical: the regex anchors on word boundaries and the"
+          " LIKE clauses match substrings, so they return different row sets. That"
+          " is the point - this is the rewrite people actually reach for - but it"
+          " means the comparison is cost-only and no semantics check covers it.")
+
+
+# m7's third variant answers a narrower question than its note used to claim: it
+# joins the STRING posts table to the *INT64* users table, so it adds the CAST
+# and takes one side already migrated. That leaves the case anyone with an
+# unmigrated schema actually has - both sides STRING - unmeasured. This is it,
+# against the fully-migrated join it would have to match.
+myth("m7b_cast_both_sides",
+     "You can CAST at query time instead of migrating the table.",
+     "Myth 7 follow-up — casting when NEITHER side is INT64",
+     [("native_int64",
+       f"SELECT COUNT(*) AS n, SUM(u.reputation) AS r "
+       f"FROM {_f('k_posts_int')} p JOIN {_f('k_users_int')} u ON p.owner_user_id = u.id"),
+      ("cast_both_sides",
+       f"SELECT COUNT(*) AS n, SUM(u.reputation) AS r "
+       f"FROM {_f('k_posts_str')} p JOIN {_f('k_users_str')} u "
+       f"ON CAST(p.owner_user_id AS INT64) = CAST(u.id AS INT64)")],
+     reps=9,
+     note="The case anyone with an unmigrated schema actually has, and it"
+          " settles what m7 could not. Casting both sides removes 73% of the"
+          " slot-time penalty (1.38x -> 1.10x) and NONE of the byte penalty:"
+          " both STRING variants bill 504 MiB against native INT64's 458. A CAST"
+          " cannot shrink what you scan. So on on-demand pricing, where bytes"
+          " are the bill, casting at query time buys you nothing at all -"
+          " migrating the column is the only thing that does.")
 
 
 ALL = CORE + FOLLOWUPS
@@ -341,6 +410,7 @@ DOC_ORDER = [
     "m5_join_order_3t",
     "m6_denormalisation",
     "m7_key_types",
+    "m7b_cast_both_sides",
     "b1_limit_bytes",
     "b3_select_star",
     "b2_predicate_cost",
