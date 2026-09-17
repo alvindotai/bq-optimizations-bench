@@ -274,6 +274,18 @@ across the set. This is why no result rests on a p-value alone:
 
 ## Caveats
 
+**The scope of every verdict, stated once and plainly.** This is the strongest
+claim in the repository and the easiest to overstate, so it gets its own
+paragraph rather than a footnote: **every verdict here is scoped to
+unpartitioned, unclustered tables on on-demand pricing.** It is stated at the
+top of the README and in the lead-in to the summary table, and it is where a
+hostile reader will push hardest — rightly, because most production tables are
+partitioned or clustered, and several of these claims are *about* the pruning
+that partitioning and clustering enable. Nothing below should be read as
+"filter order never matters" or "`LIMIT` never reduces bytes" in general. It
+should be read as: on these tables, on this meter, here is what the engine
+actually did.
+
 **One dataset, one region, one pricing model.** Everything ran against
 `bigquery-public-data.stackoverflow` (plus two fixtures derived from it) in the
 US multi-region on on-demand pricing. On a reservation with fixed slots the
