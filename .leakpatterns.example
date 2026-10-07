@@ -1,0 +1,16 @@
+# Organisation-specific strings that must never reach a public commit.
+# Copy to `.leakpatterns` (gitignored) and edit. One regex per line, matched
+# case-insensitively; `#` starts a comment.
+#
+# Keep this list OUT of version control. A denylist committed to a public
+# repository publishes exactly the identifiers it is meant to suppress.
+
+# mycompany
+# \bmycorp[-_]
+# 1234567890            # internal GCP project number
+# internal_dataset_name
+# alice|bob             # personal handles that should not appear in the tree
+
+# Exemptions: a line containing this literal string is skipped entirely.
+# Use for a repository's own public URL, which necessarily contains the org name.
+# !myorg/my-public-repo
